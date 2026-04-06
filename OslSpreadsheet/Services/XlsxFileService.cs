@@ -1,6 +1,7 @@
-﻿using OslSpreadsheet.Models;
-using OslSpreadsheet.Models.Files.xlsx;
+using OslSpreadsheet.Models;
 using System.IO.Compression;
+using System.Security;
+using System.Text;
 
 namespace OslSpreadsheet.Services
 {
@@ -10,103 +11,161 @@ namespace OslSpreadsheet.Services
 
         public ValueTask DisposeAsync()
         {
-            throw new NotImplementedException();
+            Dispose();
+            return ValueTask.CompletedTask;
         }
 
         public async Task<byte[]> GenerateFileAsync(oWorkbook workbook)
         {
-            byte[] output;
-
-            try
+            var files = new List<InMemoryFile>
             {
-                // TODO: need to convert oWorkbook to ooxWorkbook
-                OXWorkbook wb = new();
+                new InMemoryFile { FileName = "[Content_Types].xml", Content = BuildContentTypes(workbook) },
+                new InMemoryFile { FileName = "_rels/.rels",          Content = BuildRootRels() },
+                new InMemoryFile { FileName = "xl/workbook.xml",      Content = BuildWorkbook(workbook) },
+                new InMemoryFile { FileName = "xl/_rels/workbook.xml.rels", Content = BuildWorkbookRels(workbook) },
+                new InMemoryFile { FileName = "xl/styles.xml",        Content = BuildStyles() },
+            };
 
-                var types = new OXContentTypes(wb);
-
-                List<InMemoryFile> files = new();
-
-                var fileLists = types.Parts.Select(x => x.PartName).ToList();
-
-                files.Add(new InMemoryFile()
-                {
-                    FileName = "[Content_Types].xml",
-                    Content = await XmlService.ConvertToXmlAsync(types)
-                });
-
-                files.Add(new InMemoryFile()
-                {
-                    FileName = "_rels/.rels.xml",
-                    Content = await XmlService.ConvertToXmlAsync(new Rels())
-                });
-
-                foreach (var file in fileLists)
-                {
-                    object? o = null;
-
-                    if (file.Contains("/workbook.xml")) o = wb;
-                    if (file.Contains("/xl/worksheets/")) o = wb.Sheets.First(x => x.name == file.Replace("/xl/worksheets/", "").Replace(".xml", ""));
-
-                    files.Add(new InMemoryFile()
-                    {
-                        FileName = file.TrimStart('/'),
-                        Content = o == null ? new byte[0] : await XmlService.ConvertToXmlAsync(o)
-                    });
-                }
-
-                await using MemoryStream archiveStream = new();
-                using (ZipArchive archive = new(archiveStream, ZipArchiveMode.Create, true))
-                {
-                    foreach (var file in files)
-                    {
-                        var zipArchiveEntry = archive.CreateEntry(file.FileName, CompressionLevel.Fastest);
-                        using var zipStream = zipArchiveEntry.Open();
-                        zipStream.Write(file.Content, 0, file.Content.Length);
-                    }
-                }
-
-                output = archiveStream.ToArray();
-
-                //output = await ZipService.GenerateZipAsync(files);
-            }
-            catch
+            foreach (var sheet in workbook.Sheets)
             {
-                throw new Exception("There was an issue compressing the file.");
+                files.Add(new InMemoryFile
+                {
+                    FileName = $"xl/worksheets/sheet{sheet.Index}.xml",
+                    Content = BuildWorksheet(sheet)
+                });
             }
 
-            return output;
+            await using MemoryStream archiveStream = new();
+            using (ZipArchive archive = new(archiveStream, ZipArchiveMode.Create, true))
+            {
+                foreach (var file in files)
+                {
+                    var entry = archive.CreateEntry(file.FileName, CompressionLevel.Fastest);
+                    using var stream = entry.Open();
+                    stream.Write(file.Content, 0, file.Content.Length);
+                }
+            }
+
+            return archiveStream.ToArray();
         }
 
-        public async Task<oWorkbook> GenerateModel(byte[] file)
+        public Task<oWorkbook> GenerateModel(byte[] file)
         {
             throw new NotImplementedException();
+        }
+
+        private static byte[] Utf8(string xml) => Encoding.UTF8.GetBytes(xml);
+
+        private static byte[] BuildContentTypes(oWorkbook workbook)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            sb.Append("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">");
+            sb.Append("<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>");
+            sb.Append("<Default Extension=\"xml\" ContentType=\"application/xml\"/>");
+            sb.Append("<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>");
+            sb.Append("<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>");
+            foreach (var sheet in workbook.Sheets)
+                sb.Append($"<Override PartName=\"/xl/worksheets/sheet{sheet.Index}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
+            sb.Append("</Types>");
+            return Utf8(sb.ToString());
+        }
+
+        private static byte[] BuildRootRels() => Utf8(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>" +
+            "</Relationships>");
+
+        private static byte[] BuildWorkbook(oWorkbook workbook)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            sb.Append("<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
+            sb.Append("<sheets>");
+            foreach (var sheet in workbook.Sheets)
+                sb.Append($"<sheet name=\"{SecurityElement.Escape(sheet.SheetName)}\" sheetId=\"{sheet.Index}\" r:id=\"rId{sheet.Index}\"/>");
+            sb.Append("</sheets>");
+            sb.Append("</workbook>");
+            return Utf8(sb.ToString());
+        }
+
+        private static byte[] BuildWorkbookRels(oWorkbook workbook)
+        {
+            var stylesId = workbook.Sheets.Any() ? workbook.Sheets.Max(x => x.Index) + 1 : 1;
+
+            var sb = new StringBuilder();
+            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            sb.Append("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">");
+            foreach (var sheet in workbook.Sheets)
+                sb.Append($"<Relationship Id=\"rId{sheet.Index}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{sheet.Index}.xml\"/>");
+            sb.Append($"<Relationship Id=\"rId{stylesId}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>");
+            sb.Append("</Relationships>");
+            return Utf8(sb.ToString());
+        }
+
+        private static byte[] BuildStyles() => Utf8(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+            "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" +
+            "<fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>" +
+            "<fills count=\"2\">" +
+                "<fill><patternFill patternType=\"none\"/></fill>" +
+                "<fill><patternFill patternType=\"gray125\"/></fill>" +
+            "</fills>" +
+            "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>" +
+            "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>" +
+            "<cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs>" +
+            "</styleSheet>");
+
+        private static byte[] BuildWorksheet(oSpreadsheet sheet)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            sb.Append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
+            sb.Append("<sheetData>");
+
+            for (int r = 1; r <= sheet.RowCount; r++)
+            {
+                var rowCells = sheet.GetRow(r);
+                if (!rowCells.Any()) continue;
+
+                sb.Append($"<row r=\"{r}\">");
+                foreach (var cell in rowCells)
+                {
+                    var cellRef = $"{ColumnLetter(cell.Column)}{cell.Row}";
+                    if (cell.ValueType == CellValueType.Float)
+                        sb.Append($"<c r=\"{cellRef}\"><v>{SecurityElement.Escape(cell.Value)}</v></c>");
+                    else
+                        sb.Append($"<c r=\"{cellRef}\" t=\"inlineStr\"><is><t>{SecurityElement.Escape(cell.Value)}</t></is></c>");
+                }
+                sb.Append("</row>");
+            }
+
+            sb.Append("</sheetData>");
+            sb.Append("</worksheet>");
+            return Utf8(sb.ToString());
+        }
+
+        private static string ColumnLetter(int col)
+        {
+            string result = "";
+            while (col > 0)
+            {
+                col--;
+                result = (char)('A' + col % 26) + result;
+                col /= 26;
+            }
+            return result;
         }
 
         protected virtual void Dispose(bool disposing)
         {
             if (!disposedValue)
-            {
-                if (disposing)
-                {
-                    // TODO: dispose managed state (managed objects)
-                }
-
-                // TODO: free unmanaged resources (unmanaged objects) and override finalizer
-                // TODO: set large fields to null
                 disposedValue = true;
-            }
         }
-
-        // // TODO: override finalizer only if 'Dispose(bool disposing)' has code to free unmanaged resources
-        // ~GenerateXlsxFileService()
-        // {
-        //     // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
-        //     Dispose(disposing: false);
-        // }
 
         public void Dispose()
         {
-            // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
             Dispose(disposing: true);
             GC.SuppressFinalize(this);
         }

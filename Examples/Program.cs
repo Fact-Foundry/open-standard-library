@@ -15,7 +15,7 @@ using IHost host = Host.CreateDefaultBuilder(args)
 
 // Begin test code:
 
-await TestGenerateOds();
+await TestGenerateXlsx();
 
 
 // Run the application
@@ -120,6 +120,6 @@ async Task TestGenerateXlsx()
         var xlsxFile = await spreadsheet.GenerateXlsxFileAsync();
 
         // Save compressed file
-        await File.WriteAllBytesAsync(@"C:\Temp\New File (XLSX).xlsx", xlsxFile);
+        await File.WriteAllBytesAsync(@"/tmp/test.xlsx", xlsxFile);
     }
 }
