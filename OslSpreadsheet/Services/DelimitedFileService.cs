@@ -165,14 +165,8 @@ namespace OslSpreadsheet.Services
             return workbook;
         }
 
-        public void Dispose()
-        {
-            throw new NotImplementedException();
-        }
+        public void Dispose() { }
 
-        public ValueTask DisposeAsync()
-        {
-            throw new NotImplementedException();
-        }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

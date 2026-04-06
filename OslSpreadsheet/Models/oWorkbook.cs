@@ -61,19 +61,19 @@
             {
                 lock (this)
                 {
-                    var e = Sheets.FirstOrDefault(x => x.Index == sheet.Index);
+                    var index = Sheets.FindIndex(x => x.Index == sheet.Index);
 
-                    if (e == null)
+                    if (index == -1)
                         Sheets.Add(sheet);
                     else
-                        e = sheet;
+                        Sheets[index] = sheet;
 
-                    return e ?? sheet;
+                    return sheet;
                 }
             }
             catch
             {
-                throw new Exception("There was an error addind a new worksheet to the workbook");
+                throw new Exception("There was an error adding a new worksheet to the workbook");
             }
         }
     }
