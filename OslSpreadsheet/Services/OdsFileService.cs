@@ -85,11 +85,90 @@ namespace OslSpreadsheet.Services
                     tableProperties = new()
                 });
 
-                file.body.spreadsheet.Tables.Add(new ODContent.Table()
+                var table = new ODContent.Table()
                 {
                     Name = s.SheetName,
                     StyleName = styleName
-                });
+                };
+
+                if (s.Cells.Any())
+                {
+                    int rowCount = s.RowCount;
+                    int colCount = s.ColumnCount;
+
+                    for (int r = 1; r <= rowCount; r++)
+                    {
+                        var tableRow = new ODContent.Table.TableRow();
+
+                        for (int c = 1; c <= colCount; c++)
+                        {
+                            var cell = s.Cells.FirstOrDefault(x => x.Row == r && x.Column == c);
+
+                            if (cell != null)
+                            {
+                                var tableCell = new ODContent.Table.TableRow.TableCell()
+                                {
+                                    StyleName = "ce1",
+                                    TextValue = cell.Value
+                                };
+
+                                if (cell.ValueType == CellValueType.Float)
+                                {
+                                    tableCell.ValueType = "float";
+                                    tableCell.NumericValue = cell.Value;
+                                }
+                                else
+                                {
+                                    tableCell.ValueType = "string";
+                                }
+
+                                tableRow.Cells.Add(tableCell);
+                            }
+                            else
+                            {
+                                tableRow.Cells.Add(new ODContent.Table.TableRow.TableCell());
+                            }
+                        }
+
+                        // Trailing empty columns filler
+                        tableRow.Cells.Add(new ODContent.Table.TableRow.TableCell()
+                        {
+                            NumberColumnsRepeated = (16384 - colCount).ToString()
+                        });
+
+                        table.Rows.Add(tableRow);
+                    }
+
+                    // Trailing empty rows filler
+                    table.Rows.Add(new ODContent.Table.TableRow()
+                    {
+                        NumberRowsRepeated = (1048577 - rowCount).ToString(),
+                        Cells = new List<ODContent.Table.TableRow.TableCell>()
+                        {
+                            new ODContent.Table.TableRow.TableCell()
+                            {
+                                NumberColumnsRepeated = "16384"
+                            }
+                        }
+                    });
+                }
+                else
+                {
+                    // Empty sheet — filler row
+                    table.Rows.Add(new ODContent.Table.TableRow()
+                    {
+                        NumberRowsRepeated = "1048577",
+                        Cells = new List<ODContent.Table.TableRow.TableCell>()
+                        {
+                            new ODContent.Table.TableRow.TableCell()
+                            {
+                                NumberColumnsRepeated = "16384"
+                            }
+                        }
+                    });
+                }
+
+                file.body.spreadsheet.Tables.Add(table);
             }
 
             return file;

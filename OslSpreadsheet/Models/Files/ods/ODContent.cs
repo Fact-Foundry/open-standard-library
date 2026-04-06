@@ -211,35 +211,10 @@ namespace OslSpreadsheet.Models.Files.ods
         [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
         public class Table
         {
-            private readonly int _maxColumns;
-            private readonly int _maxRows;
-
-            private List<TableRow> _rows;
-
             public Table()
             {
-                _maxColumns = 16384;
-                _maxRows = 1048577;
-
-                tableColumn = new() { NumberColumnsRepeated = _maxColumns.ToString() };
-
-                _rows = new()
-                {
-                    new TableRow()
-                    {
-                        RowIndex = 1,
-                        NumberRowsRepeated = (_maxRows - 1).ToString(),
-                        Cells = new()
-                        {
-                            new TableRow.TableCell()
-                            {
-                                NumberColumnsRepeated = _maxColumns.ToString(),
-                                StyleName = null,
-                                ValueType = null
-                            }
-                        }
-                    }
-                };
+                tableColumn = new() { NumberColumnsRepeated = "16384" };
+                Rows = new List<TableRow>();
             }
 
             [XmlAttribute("name", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
@@ -252,7 +227,7 @@ namespace OslSpreadsheet.Models.Files.ods
             public TableColumn tableColumn { get; set; }
 
             [XmlElement("table-row", ElementName = "table-row", Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
-            public List<TableRow> Rows { get => _rows; set { } }
+            public List<TableRow> Rows { get; set; }
 
             [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
             public class TableColumn
@@ -291,13 +266,19 @@ namespace OslSpreadsheet.Models.Files.ods
                 public class TableCell
                 {
                     [XmlAttribute("value-type", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0")] // namespace:office
-                    public string? ValueType { get; set; } = "string";
+                    public string? ValueType { get; set; }
+
+                    [XmlAttribute("value", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0")] // namespace:office
+                    public string? NumericValue { get; set; }
 
                     [XmlAttribute("number-columns-repeated", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
                     public string? NumberColumnsRepeated { get; set; }
 
                     [XmlAttribute("style-name", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
-                    public string? StyleName { get; set; } = "ce1";
+                    public string? StyleName { get; set; }
+
+                    [XmlElement("p", ElementName = "p", Namespace = "urn:oasis:names:tc:opendocument:xmlns:text:1.0")]
+                    public string? TextValue { get; set; }
                 }
             }
         }

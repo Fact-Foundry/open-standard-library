@@ -15,12 +15,7 @@ using IHost host = Host.CreateDefaultBuilder(args)
 
 // Begin test code:
 
-// Generate spreadsheet
-//await TestOds();
-
-await TestGenerateCsv();
-
-//await TestImportCsv();
+await TestGenerateOds();
 
 
 // Run the application
@@ -98,7 +93,7 @@ async Task TestGenerateOds()
         var odsFile = await spreadsheet.GenerateOdsFileAsync();
 
         // Save compressed file
-        await File.WriteAllBytesAsync(@"C:\Temp\New File.ods", odsFile);
+        await File.WriteAllBytesAsync(@"/tmp/test.ods", odsFile);
     }
 }
 
