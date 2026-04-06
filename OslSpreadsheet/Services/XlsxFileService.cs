@@ -2,6 +2,7 @@ using OslSpreadsheet.Models;
 using System.IO.Compression;
 using System.Security;
 using System.Text;
+using System.Xml.Linq;
 
 namespace OslSpreadsheet.Services
 {
@@ -49,9 +50,117 @@ namespace OslSpreadsheet.Services
             return archiveStream.ToArray();
         }
 
-        public Task<oWorkbook> GenerateModel(byte[] file)
+        public async Task<oWorkbook> GenerateModel(byte[] file)
         {
-            throw new NotImplementedException();
+            oWorkbook workbook = new();
+
+            using var ms = new MemoryStream(file);
+            using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+
+            XNamespace mainNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            XNamespace rNs    = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+            XNamespace relsNs = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+            // Load shared strings if present
+            var sharedStrings = new List<string>();
+            var ssEntry = archive.GetEntry("xl/sharedStrings.xml");
+            if (ssEntry != null)
+            {
+                using var ssStream = ssEntry.Open();
+                var ssDoc = await Task.Run(() => XDocument.Load(ssStream));
+                sharedStrings = ssDoc.Descendants(mainNs + "si")
+                    .Select(si => string.Concat(si.Descendants(mainNs + "t").Select(t => t.Value)))
+                    .ToList();
+            }
+
+            // Load workbook.xml
+            var wbEntry = archive.GetEntry("xl/workbook.xml")
+                ?? throw new InvalidOperationException("Invalid XLSX file: missing xl/workbook.xml");
+
+            XDocument wbDoc;
+            using (var wbStream = wbEntry.Open())
+                wbDoc = await Task.Run(() => XDocument.Load(wbStream));
+
+            // Load workbook.xml.rels — maps rId to sheet file path
+            var relsEntry = archive.GetEntry("xl/_rels/workbook.xml.rels")
+                ?? throw new InvalidOperationException("Invalid XLSX file: missing xl/_rels/workbook.xml.rels");
+
+            XDocument relsDoc;
+            using (var relsStream = relsEntry.Open())
+                relsDoc = await Task.Run(() => XDocument.Load(relsStream));
+
+            var relationships = relsDoc.Descendants(relsNs + "Relationship")
+                .ToDictionary(r => r.Attribute("Id")!.Value, r => r.Attribute("Target")!.Value);
+
+            foreach (var sheetEl in wbDoc.Descendants(mainNs + "sheet"))
+            {
+                var sheetName = sheetEl.Attribute("name")?.Value ?? "Sheet";
+                var rId = sheetEl.Attribute(rNs + "id")?.Value;
+                if (rId == null || !relationships.TryGetValue(rId, out var target)) continue;
+
+                // Target paths are relative to xl/
+                var sheetPath = target.StartsWith('/') ? target.TrimStart('/') : $"xl/{target}";
+                var sheetEntry = archive.GetEntry(sheetPath);
+                if (sheetEntry == null) continue;
+
+                var sheet = workbook.AddSheet(sheetName);
+
+                XDocument sheetDoc;
+                using (var sheetStream = sheetEntry.Open())
+                    sheetDoc = await Task.Run(() => XDocument.Load(sheetStream));
+
+                foreach (var rowEl in sheetDoc.Descendants(mainNs + "row"))
+                {
+                    foreach (var cellEl in rowEl.Elements(mainNs + "c"))
+                    {
+                        var cellRef = cellEl.Attribute("r")?.Value;
+                        if (cellRef == null) continue;
+
+                        var (rowNum, colNum) = ParseCellRef(cellRef);
+                        var cellType = cellEl.Attribute("t")?.Value;
+                        var rawValue = cellEl.Element(mainNs + "v")?.Value ?? "";
+
+                        string value;
+                        CellValueType valueType = CellValueType.String;
+
+                        switch (cellType)
+                        {
+                            case "s": // shared string index
+                                var idx = int.TryParse(rawValue, out int si) ? si : 0;
+                                value = idx < sharedStrings.Count ? sharedStrings[idx] : "";
+                                break;
+                            case "inlineStr":
+                                value = string.Concat(cellEl.Descendants(mainNs + "t").Select(t => t.Value));
+                                break;
+                            case "str": // formula string result
+                                value = rawValue;
+                                break;
+                            default: // number
+                                value = rawValue;
+                                if (!string.IsNullOrEmpty(value))
+                                    valueType = CellValueType.Float;
+                                break;
+                        }
+
+                        var oCell = sheet.AddCell(rowNum, colNum, value);
+                        oCell.ValueType = valueType;
+                    }
+                }
+            }
+
+            return workbook;
+        }
+
+        private static (int row, int col) ParseCellRef(string cellRef)
+        {
+            int i = 0;
+            while (i < cellRef.Length && char.IsLetter(cellRef[i])) i++;
+
+            int col = 0;
+            foreach (char c in cellRef[..i])
+                col = col * 26 + (c - 'A' + 1);
+
+            return (int.Parse(cellRef[i..]), col);
         }
 
         private static byte[] Utf8(string xml) => Encoding.UTF8.GetBytes(xml);
