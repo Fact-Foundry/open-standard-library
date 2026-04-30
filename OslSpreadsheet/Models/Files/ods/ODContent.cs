@@ -263,7 +263,7 @@ namespace OslSpreadsheet.Models.Files.ods
         {
             public Table()
             {
-                tableColumn = new() { NumberColumnsRepeated = "16384" };
+                tableColumns = new List<TableColumn>() { new() { NumberColumnsRepeated = "16384" } };
                 Rows = new List<TableRow>();
             }
 
@@ -274,7 +274,7 @@ namespace OslSpreadsheet.Models.Files.ods
             public string StyleName { get; set; } = "ta1";
 
             [XmlElement("table-column", ElementName = "table-column", Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
-            public TableColumn tableColumn { get; set; }
+            public List<TableColumn> tableColumns { get; set; }
 
             [XmlElement("table-row", ElementName = "table-row", Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
             public List<TableRow> Rows { get; set; }

@@ -222,6 +222,36 @@ namespace OslSpreadsheet.Services
                     StyleName = styleName
                 };
 
+                if (s.ColumnWidths.Any())
+                {
+                    table.tableColumns.Clear();
+                    int colCount = s.Cells.Any() ? s.ColumnCount : 0;
+                    int maxCol = Math.Max(colCount, s.ColumnWidths.Any() ? s.ColumnWidths.Keys.Max() : 0);
+
+                    for (int c = 1; c <= maxCol; c++)
+                    {
+                        if (s.ColumnWidths.TryGetValue(c, out double width))
+                        {
+                            var colStyleName = $"co{s.Index}c{c}";
+                            file.automaticStyles.automaticStyles.Add(new ODContent.AutomaticStyles.Style()
+                            {
+                                Name = colStyleName,
+                                Family = "table-column",
+                                tableColumnProperties = new() { ColumnWidth = $"{CharsToOdsCm(width)}cm" }
+                            });
+                            table.tableColumns.Add(new ODContent.Table.TableColumn() { StyleName = colStyleName, NumberColumnsRepeated = "" });
+                        }
+                        else
+                        {
+                            table.tableColumns.Add(new ODContent.Table.TableColumn() { NumberColumnsRepeated = "" });
+                        }
+                    }
+
+                    int remaining = 16384 - maxCol;
+                    if (remaining > 0)
+                        table.tableColumns.Add(new ODContent.Table.TableColumn() { NumberColumnsRepeated = remaining.ToString() });
+                }
+
                 if (s.Cells.Any())
                 {
                     int rowCount = s.RowCount;
@@ -430,6 +460,8 @@ namespace OslSpreadsheet.Services
 
         private static string EdgeKey(CellBorder? b) =>
             b == null ? "" : $"{b.Style}:{b.Color}";
+
+        private static double CharsToOdsCm(double chars) => Math.Round(chars * (1.69333333333333 / 8.43), 4);
 
         private static string FormatOdsBorder(CellBorder b)
         {

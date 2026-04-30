@@ -389,6 +389,14 @@ namespace OslSpreadsheet.Services
                 sb.Append("</sheetView></sheetViews>");
             }
 
+            if (sheet.ColumnWidths.Any())
+            {
+                sb.Append("<cols>");
+                foreach (var (col, width) in sheet.ColumnWidths.OrderBy(x => x.Key))
+                    sb.Append($"<col min=\"{col}\" max=\"{col}\" width=\"{width}\" customWidth=\"1\"/>");
+                sb.Append("</cols>");
+            }
+
             sb.Append("<sheetData>");
 
             for (int r = 1; r <= sheet.RowCount; r++)
