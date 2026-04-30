@@ -165,6 +165,8 @@ namespace OslSpreadsheet.Services
         {
             var file = new ODContent();
 
+            var cellStyleMap = BuildOdsCellStyles(workbook, file);
+
             foreach (var s in workbook.Sheets)
             {
                 var masterPageName = string.Format("mp{0}", s.Index);
@@ -199,9 +201,17 @@ namespace OslSpreadsheet.Services
 
                             if (cell != null)
                             {
+                                var cellStyleName = "ce1";
+                                if (cell.Style != null)
+                                {
+                                    var key = GetStyleKey(cell.Style);
+                                    if (cellStyleMap.TryGetValue(key, out var mapped))
+                                        cellStyleName = mapped;
+                                }
+
                                 var tableCell = new ODContent.Table.TableRow.TableCell()
                                 {
-                                    StyleName = "ce1",
+                                    StyleName = cellStyleName,
                                     TextValue = cell.Value
                                 };
 
@@ -321,6 +331,82 @@ namespace OslSpreadsheet.Services
             }
 
             return file;
+        }
+
+        private static Dictionary<string, string> BuildOdsCellStyles(oWorkbook workbook, ODContent file)
+        {
+            var map = new Dictionary<string, string>();
+            var nextIndex = 2;
+
+            foreach (var sheet in workbook.Sheets)
+                foreach (var cell in sheet.Cells)
+                    if (cell.Style != null)
+                    {
+                        var key = GetStyleKey(cell.Style);
+                        if (map.ContainsKey(key)) continue;
+
+                        var name = $"ce{nextIndex++}";
+                        map[key] = name;
+
+                        var style = new ODContent.AutomaticStyles.Style
+                        {
+                            Name = name,
+                            Family = "table-cell",
+                            ParentStyleName = "Default",
+                            DataStyleName = "N0"
+                        };
+
+                        var cs = cell.Style;
+
+                        if (cs.Bold || cs.Italic || cs.Underline || cs.FontColor != null || cs.FontName != null || cs.FontSize != null)
+                        {
+                            style.textProperties = new ODContent.AutomaticStyles.Style.TextProperties();
+                            if (cs.Bold) style.textProperties.FontWeight = "bold";
+                            if (cs.Italic) style.textProperties.FontStyle = "italic";
+                            if (cs.Underline)
+                            {
+                                style.textProperties.TextUnderlineStyle = "solid";
+                                style.textProperties.TextUnderlineWidth = "auto";
+                            }
+                            if (cs.FontColor != null) style.textProperties.Color = cs.FontColor;
+                            if (cs.FontName != null) style.textProperties.FontName = cs.FontName;
+                            if (cs.FontSize != null) style.textProperties.FontSize = $"{cs.FontSize}pt";
+                        }
+
+                        if (cs.BackgroundColor != null || cs.BorderTop != null || cs.BorderBottom != null || cs.BorderLeft != null || cs.BorderRight != null)
+                        {
+                            style.tableCellProperties = new ODContent.AutomaticStyles.Style.TableCellStyleProperties();
+                            if (cs.BackgroundColor != null) style.tableCellProperties.BackgroundColor = cs.BackgroundColor;
+                            if (cs.BorderTop != null) style.tableCellProperties.BorderTop = FormatOdsBorder(cs.BorderTop);
+                            if (cs.BorderBottom != null) style.tableCellProperties.BorderBottom = FormatOdsBorder(cs.BorderBottom);
+                            if (cs.BorderLeft != null) style.tableCellProperties.BorderLeft = FormatOdsBorder(cs.BorderLeft);
+                            if (cs.BorderRight != null) style.tableCellProperties.BorderRight = FormatOdsBorder(cs.BorderRight);
+                        }
+
+                        file.automaticStyles.automaticStyles.Add(style);
+                    }
+
+            return map;
+        }
+
+        private static string GetStyleKey(CellStyle s) =>
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+
+        private static string EdgeKey(CellBorder? b) =>
+            b == null ? "" : $"{b.Style}:{b.Color}";
+
+        private static string FormatOdsBorder(CellBorder b)
+        {
+            if (b.Style == BorderStyle.None) return "none";
+            var width = b.Style switch
+            {
+                BorderStyle.Thin => "0.75pt",
+                BorderStyle.Medium => "1.5pt",
+                BorderStyle.Thick => "2.5pt",
+                _ => "0.75pt"
+            };
+            var color = b.Color ?? "#000000";
+            return $"{width} solid {color}";
         }
 
         protected virtual void Dispose(bool disposing)

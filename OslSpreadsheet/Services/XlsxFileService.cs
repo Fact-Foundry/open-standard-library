@@ -18,13 +18,15 @@ namespace OslSpreadsheet.Services
 
         public async Task<byte[]> GenerateFileAsync(oWorkbook workbook)
         {
+            var (stylesXml, styleIndexMap) = BuildStylesForWorkbook(workbook);
+
             var files = new List<InMemoryFile>
             {
                 new InMemoryFile { FileName = "[Content_Types].xml", Content = BuildContentTypes(workbook) },
                 new InMemoryFile { FileName = "_rels/.rels",          Content = BuildRootRels() },
                 new InMemoryFile { FileName = "xl/workbook.xml",      Content = BuildWorkbook(workbook) },
                 new InMemoryFile { FileName = "xl/_rels/workbook.xml.rels", Content = BuildWorkbookRels(workbook) },
-                new InMemoryFile { FileName = "xl/styles.xml",        Content = BuildStyles() },
+                new InMemoryFile { FileName = "xl/styles.xml",        Content = stylesXml },
             };
 
             foreach (var sheet in workbook.Sheets)
@@ -32,7 +34,7 @@ namespace OslSpreadsheet.Services
                 files.Add(new InMemoryFile
                 {
                     FileName = $"xl/worksheets/sheet{sheet.Index}.xml",
-                    Content = BuildWorksheet(sheet)
+                    Content = BuildWorksheet(sheet, styleIndexMap)
                 });
             }
 
@@ -217,20 +219,151 @@ namespace OslSpreadsheet.Services
             return Utf8(sb.ToString());
         }
 
-        private static byte[] BuildStyles() => Utf8(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
-            "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" +
-            "<fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>" +
-            "<fills count=\"2\">" +
-                "<fill><patternFill patternType=\"none\"/></fill>" +
-                "<fill><patternFill patternType=\"gray125\"/></fill>" +
-            "</fills>" +
-            "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>" +
-            "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>" +
-            "<cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs>" +
-            "</styleSheet>");
+        private static (byte[] stylesXml, Dictionary<string, int> styleIndexMap) BuildStylesForWorkbook(oWorkbook workbook)
+        {
+            var defaultFontKey = GetFontKey(new CellStyle());
+            var fonts = new List<string> { "<font><sz val=\"11\"/><name val=\"Calibri\"/></font>" };
+            var fontKeys = new Dictionary<string, int> { [defaultFontKey] = 0 };
 
-        private static byte[] BuildWorksheet(oSpreadsheet sheet)
+            var fills = new List<string>
+            {
+                "<fill><patternFill patternType=\"none\"/></fill>",
+                "<fill><patternFill patternType=\"gray125\"/></fill>"
+            };
+            var fillKeys = new Dictionary<string, int> { ["none"] = 0 };
+
+            var defaultBorderKey = GetBorderKey(new CellStyle());
+            var borders = new List<string> { "<border><left/><right/><top/><bottom/><diagonal/></border>" };
+            var borderKeys = new Dictionary<string, int> { [defaultBorderKey] = 0 };
+
+            var xfs = new List<string> { "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" };
+            var xfKeys = new Dictionary<string, int> { ["0|0|0"] = 0 };
+
+            var styleIndexMap = new Dictionary<string, int>();
+
+            var uniqueStyles = new Dictionary<string, CellStyle>();
+            foreach (var sheet in workbook.Sheets)
+                foreach (var cell in sheet.Cells)
+                    if (cell.Style != null)
+                    {
+                        var key = GetStyleKey(cell.Style);
+                        uniqueStyles.TryAdd(key, cell.Style);
+                    }
+
+            foreach (var (key, style) in uniqueStyles)
+            {
+                var fk = GetFontKey(style);
+                if (!fontKeys.TryGetValue(fk, out int fontId))
+                {
+                    fontId = fonts.Count;
+                    fonts.Add(BuildFontXml(style));
+                    fontKeys[fk] = fontId;
+                }
+
+                var flk = style.BackgroundColor ?? "none";
+                if (!fillKeys.TryGetValue(flk, out int fillId))
+                {
+                    fillId = fills.Count;
+                    fills.Add($"<fill><patternFill patternType=\"solid\"><fgColor rgb=\"{ToArgb(style.BackgroundColor!)}\"/></patternFill></fill>");
+                    fillKeys[flk] = fillId;
+                }
+
+                var bk = GetBorderKey(style);
+                if (!borderKeys.TryGetValue(bk, out int borderId))
+                {
+                    borderId = borders.Count;
+                    borders.Add(BuildBorderXml(style));
+                    borderKeys[bk] = borderId;
+                }
+
+                var xfk = $"{fontId}|{fillId}|{borderId}";
+                if (!xfKeys.TryGetValue(xfk, out int xfId))
+                {
+                    xfId = xfs.Count;
+                    var xfSb = new StringBuilder($"<xf numFmtId=\"0\" fontId=\"{fontId}\" fillId=\"{fillId}\" borderId=\"{borderId}\" xfId=\"0\"");
+                    if (fontId > 0) xfSb.Append(" applyFont=\"1\"");
+                    if (fillId > 0) xfSb.Append(" applyFill=\"1\"");
+                    if (borderId > 0) xfSb.Append(" applyBorder=\"1\"");
+                    xfSb.Append("/>");
+                    xfs.Add(xfSb.ToString());
+                    xfKeys[xfk] = xfId;
+                }
+
+                styleIndexMap[key] = xfId;
+            }
+
+            var sb = new StringBuilder();
+            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            sb.Append("<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
+            sb.Append($"<fonts count=\"{fonts.Count}\">");
+            foreach (var f in fonts) sb.Append(f);
+            sb.Append("</fonts>");
+            sb.Append($"<fills count=\"{fills.Count}\">");
+            foreach (var f in fills) sb.Append(f);
+            sb.Append("</fills>");
+            sb.Append($"<borders count=\"{borders.Count}\">");
+            foreach (var b in borders) sb.Append(b);
+            sb.Append("</borders>");
+            sb.Append("<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>");
+            sb.Append($"<cellXfs count=\"{xfs.Count}\">");
+            foreach (var x in xfs) sb.Append(x);
+            sb.Append("</cellXfs>");
+            sb.Append("</styleSheet>");
+
+            return (Utf8(sb.ToString()), styleIndexMap);
+        }
+
+        private static string GetStyleKey(CellStyle s) =>
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+
+        private static string GetFontKey(CellStyle s) =>
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.FontName}|{s.FontSize}";
+
+        private static string GetBorderKey(CellStyle s) =>
+            $"{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+
+        private static string EdgeKey(CellBorder? b) =>
+            b == null ? "" : $"{b.Style}:{b.Color}";
+
+        private static string ToArgb(string hex) => "FF" + hex.TrimStart('#');
+
+        private static string BuildFontXml(CellStyle s)
+        {
+            var sb = new StringBuilder("<font>");
+            if (s.Bold) sb.Append("<b/>");
+            if (s.Italic) sb.Append("<i/>");
+            if (s.Underline) sb.Append("<u/>");
+            sb.Append($"<sz val=\"{s.FontSize ?? 11}\"/>");
+            if (s.FontColor != null)
+                sb.Append($"<color rgb=\"{ToArgb(s.FontColor)}\"/>");
+            sb.Append($"<name val=\"{SecurityElement.Escape(s.FontName ?? "Calibri")}\"/>");
+            sb.Append("</font>");
+            return sb.ToString();
+        }
+
+        private static string BuildBorderXml(CellStyle s)
+        {
+            var sb = new StringBuilder("<border>");
+            sb.Append(BuildBorderEdgeXml("left", s.BorderLeft));
+            sb.Append(BuildBorderEdgeXml("right", s.BorderRight));
+            sb.Append(BuildBorderEdgeXml("top", s.BorderTop));
+            sb.Append(BuildBorderEdgeXml("bottom", s.BorderBottom));
+            sb.Append("<diagonal/>");
+            sb.Append("</border>");
+            return sb.ToString();
+        }
+
+        private static string BuildBorderEdgeXml(string edge, CellBorder? b)
+        {
+            if (b == null || b.Style == BorderStyle.None)
+                return $"<{edge}/>";
+            var style = b.Style.ToString().ToLowerInvariant();
+            if (b.Color != null)
+                return $"<{edge} style=\"{style}\"><color rgb=\"{ToArgb(b.Color)}\"/></{edge}>";
+            return $"<{edge} style=\"{style}\"/>";
+        }
+
+        private static byte[] BuildWorksheet(oSpreadsheet sheet, Dictionary<string, int> styleIndexMap)
         {
             var sb = new StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
@@ -246,12 +379,20 @@ namespace OslSpreadsheet.Services
                 foreach (var cell in rowCells)
                 {
                     var cellRef = $"{ColumnLetter(cell.Column)}{cell.Row}";
+                    var styleAttr = "";
+                    if (cell.Style != null)
+                    {
+                        var key = GetStyleKey(cell.Style);
+                        if (styleIndexMap.TryGetValue(key, out int si) && si > 0)
+                            styleAttr = $" s=\"{si}\"";
+                    }
+
                     if (cell.ValueType == CellValueType.Float)
-                        sb.Append($"<c r=\"{cellRef}\"><v>{SecurityElement.Escape(cell.Value)}</v></c>");
+                        sb.Append($"<c r=\"{cellRef}\"{styleAttr}><v>{SecurityElement.Escape(cell.Value)}</v></c>");
                     else if (cell.ValueType == CellValueType.Boolean)
-                        sb.Append($"<c r=\"{cellRef}\" t=\"b\"><v>{(cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "1" : "0")}</v></c>");
+                        sb.Append($"<c r=\"{cellRef}\"{styleAttr} t=\"b\"><v>{(cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "1" : "0")}</v></c>");
                     else
-                        sb.Append($"<c r=\"{cellRef}\" t=\"inlineStr\"><is><t>{SecurityElement.Escape(cell.Value)}</t></is></c>");
+                        sb.Append($"<c r=\"{cellRef}\"{styleAttr} t=\"inlineStr\"><is><t>{SecurityElement.Escape(cell.Value)}</t></is></c>");
                 }
                 sb.Append("</row>");
             }
