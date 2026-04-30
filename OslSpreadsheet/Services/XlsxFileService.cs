@@ -285,7 +285,7 @@ namespace OslSpreadsheet.Services
                     borderKeys[bk] = borderId;
                 }
 
-                var xfk = $"{fontId}|{fillId}|{borderId}";
+                var xfk = $"{fontId}|{fillId}|{borderId}|{style.WrapText}";
                 if (!xfKeys.TryGetValue(xfk, out int xfId))
                 {
                     xfId = xfs.Count;
@@ -293,7 +293,15 @@ namespace OslSpreadsheet.Services
                     if (fontId > 0) xfSb.Append(" applyFont=\"1\"");
                     if (fillId > 0) xfSb.Append(" applyFill=\"1\"");
                     if (borderId > 0) xfSb.Append(" applyBorder=\"1\"");
-                    xfSb.Append("/>");
+                    if (style.WrapText) xfSb.Append(" applyAlignment=\"1\"");
+                    if (style.WrapText)
+                    {
+                        xfSb.Append("><alignment wrapText=\"1\"/></xf>");
+                    }
+                    else
+                    {
+                        xfSb.Append("/>");
+                    }
                     xfs.Add(xfSb.ToString());
                     xfKeys[xfk] = xfId;
                 }
@@ -323,7 +331,7 @@ namespace OslSpreadsheet.Services
         }
 
         private static string GetStyleKey(CellStyle s) =>
-            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
 
         private static string GetFontKey(CellStyle s) =>
             $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.FontName}|{s.FontSize}";

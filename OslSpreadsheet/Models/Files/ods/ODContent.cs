@@ -174,6 +174,9 @@ namespace OslSpreadsheet.Models.Files.ods
 
                     [XmlAttribute("border-right", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
                     public string? BorderRight { get; set; }
+
+                    [XmlAttribute("wrap-option", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? WrapOption { get; set; }
                 }
 
                 [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]

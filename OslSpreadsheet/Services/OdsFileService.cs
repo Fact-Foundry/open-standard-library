@@ -439,7 +439,7 @@ namespace OslSpreadsheet.Services
                             if (cs.FontSize != null) style.textProperties.FontSize = $"{cs.FontSize}pt";
                         }
 
-                        if (cs.BackgroundColor != null || cs.BorderTop != null || cs.BorderBottom != null || cs.BorderLeft != null || cs.BorderRight != null)
+                        if (cs.BackgroundColor != null || cs.BorderTop != null || cs.BorderBottom != null || cs.BorderLeft != null || cs.BorderRight != null || cs.WrapText)
                         {
                             style.tableCellProperties = new ODContent.AutomaticStyles.Style.TableCellStyleProperties();
                             if (cs.BackgroundColor != null) style.tableCellProperties.BackgroundColor = cs.BackgroundColor;
@@ -447,6 +447,7 @@ namespace OslSpreadsheet.Services
                             if (cs.BorderBottom != null) style.tableCellProperties.BorderBottom = FormatOdsBorder(cs.BorderBottom);
                             if (cs.BorderLeft != null) style.tableCellProperties.BorderLeft = FormatOdsBorder(cs.BorderLeft);
                             if (cs.BorderRight != null) style.tableCellProperties.BorderRight = FormatOdsBorder(cs.BorderRight);
+                            if (cs.WrapText) style.tableCellProperties.WrapOption = "wrap";
                         }
 
                         file.automaticStyles.automaticStyles.Add(style);
@@ -456,7 +457,7 @@ namespace OslSpreadsheet.Services
         }
 
         private static string GetStyleKey(CellStyle s) =>
-            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
 
         private static string EdgeKey(CellBorder? b) =>
             b == null ? "" : $"{b.Style}:{b.Color}";

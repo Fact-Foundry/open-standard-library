@@ -260,6 +260,87 @@ public class CellStyleTests
         Assert.Equal("Unstyled", row.First(c => c.Column == 2).Value);
     }
 
+    // --- Text Wrapping ---
+
+    [Fact]
+    public void CellStyle_WrapText_DefaultsFalse()
+    {
+        var style = new CellStyle();
+        Assert.False(style.WrapText);
+    }
+
+    [Fact]
+    public async Task Xlsx_WrapText_ProducesValidFile()
+    {
+        using var spreadsheet = new Spreadsheet();
+        var sheet = spreadsheet.Workbook.AddSheet("Wrap");
+
+        var cell = sheet.AddCell(1, 1, "A long description that should wrap in the cell");
+        cell.Style = new CellStyle { WrapText = true };
+
+        sheet.AddCell(1, 2, "No wrap");
+
+        var bytes = await spreadsheet.GenerateXlsxFileAsync();
+
+        using var importer = new Spreadsheet();
+        var workbook = await importer.ImportXlsxFileAsync(bytes);
+        var row = workbook.Sheets[0].GetRow(1);
+        Assert.Equal("A long description that should wrap in the cell", row.First(c => c.Column == 1).Value);
+        Assert.Equal("No wrap", row.First(c => c.Column == 2).Value);
+    }
+
+    [Fact]
+    public async Task Xlsx_WrapTextWithOtherStyles_ProducesValidFile()
+    {
+        using var spreadsheet = new Spreadsheet();
+        var sheet = spreadsheet.Workbook.AddSheet("WrapStyled");
+
+        var cell = sheet.AddCell(1, 1, "Bold wrapped text");
+        cell.Style = new CellStyle { Bold = true, WrapText = true, BackgroundColor = "#F5F5F5" };
+
+        var bytes = await spreadsheet.GenerateXlsxFileAsync();
+
+        using var importer = new Spreadsheet();
+        var workbook = await importer.ImportXlsxFileAsync(bytes);
+        Assert.Equal("Bold wrapped text", workbook.Sheets[0].GetRow(1).First(c => c.Column == 1).Value);
+    }
+
+    [Fact]
+    public async Task Ods_WrapText_ProducesValidFile()
+    {
+        using var spreadsheet = new Spreadsheet();
+        var sheet = spreadsheet.Workbook.AddSheet("Wrap");
+
+        var cell = sheet.AddCell(1, 1, "A long description that should wrap in the cell");
+        cell.Style = new CellStyle { WrapText = true };
+
+        sheet.AddCell(1, 2, "No wrap");
+
+        var bytes = await spreadsheet.GenerateOdsFileAsync();
+
+        using var importer = new Spreadsheet();
+        var workbook = await importer.ImportOdsFileAsync(bytes);
+        var row = workbook.Sheets[0].GetRow(1);
+        Assert.Equal("A long description that should wrap in the cell", row.First(c => c.Column == 1).Value);
+        Assert.Equal("No wrap", row.First(c => c.Column == 2).Value);
+    }
+
+    [Fact]
+    public async Task Ods_WrapTextWithOtherStyles_ProducesValidFile()
+    {
+        using var spreadsheet = new Spreadsheet();
+        var sheet = spreadsheet.Workbook.AddSheet("WrapStyled");
+
+        var cell = sheet.AddCell(1, 1, "Bold wrapped text");
+        cell.Style = new CellStyle { Bold = true, WrapText = true, BackgroundColor = "#F5F5F5" };
+
+        var bytes = await spreadsheet.GenerateOdsFileAsync();
+
+        using var importer = new Spreadsheet();
+        var workbook = await importer.ImportOdsFileAsync(bytes);
+        Assert.Equal("Bold wrapped text", workbook.Sheets[0].GetRow(1).First(c => c.Column == 1).Value);
+    }
+
     // --- ClosedXML replacement scenario ---
 
     [Fact]
