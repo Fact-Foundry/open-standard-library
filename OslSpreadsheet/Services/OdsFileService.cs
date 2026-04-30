@@ -1,6 +1,7 @@
 ﻿using OslSpreadsheet.Models;
 using OslSpreadsheet.Models.Files.ods;
 using System.IO.Compression;
+using System.Security;
 using System.Text;
 using System.Xml.Linq;
 
@@ -54,6 +55,15 @@ namespace OslSpreadsheet.Services
                         Content = await XmlService.ConvertToXmlAsync(style)
                     }
                 };
+
+                if (workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0))
+                {
+                    files.Add(new InMemoryFile()
+                    {
+                        FileName = "settings.xml",
+                        Content = BuildSettingsFile(workbook)
+                    });
+                }
 
                 output = await ZipService.GenerateZipAsync(files);
             }
@@ -155,6 +165,32 @@ namespace OslSpreadsheet.Services
                             oCell.ValueType = type;
                         }
                     }
+                }
+            }
+
+            var settingsEntry = archive.GetEntry("settings.xml");
+            if (settingsEntry != null)
+            {
+                XDocument settingsDoc;
+                using (var settingsStream = settingsEntry.Open())
+                    settingsDoc = await Task.Run(() => XDocument.Load(settingsStream));
+
+                XNamespace configNs = "urn:oasis:names:tc:opendocument:xmlns:config:1.0";
+                foreach (var entry in settingsDoc.Descendants(configNs + "config-item-map-named")
+                    .Where(n => n.Attribute(configNs + "name")?.Value == "Tables")
+                    .SelectMany(n => n.Elements(configNs + "config-item-map-entry")))
+                {
+                    var tableName = entry.Attribute(configNs + "name")?.Value;
+                    var sheet = workbook.Sheets.FirstOrDefault(s => s.SheetName == tableName);
+                    if (sheet == null) continue;
+
+                    var items = entry.Elements(configNs + "config-item")
+                        .ToDictionary(e => e.Attribute(configNs + "name")?.Value ?? "", e => e.Value);
+
+                    if (items.TryGetValue("VerticalSplitPosition", out var vsp) && int.TryParse(vsp, out int freezeRows))
+                        sheet.FreezeRows = freezeRows;
+                    if (items.TryGetValue("HorizontalSplitPosition", out var hsp) && int.TryParse(hsp, out int freezeCols))
+                        sheet.FreezeColumns = freezeCols;
                 }
             }
 
@@ -407,6 +443,41 @@ namespace OslSpreadsheet.Services
             };
             var color = b.Color ?? "#000000";
             return $"{width} solid {color}";
+        }
+
+        private static byte[] BuildSettingsFile(oWorkbook workbook)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            sb.Append("<office:document-settings xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:config=\"urn:oasis:names:tc:opendocument:xmlns:config:1.0\" office:version=\"1.3\">");
+            sb.Append("<office:settings>");
+            sb.Append("<config:config-item-set config:name=\"ooo:view-settings\">");
+            sb.Append("<config:config-item-map-indexed config:name=\"Views\">");
+            sb.Append("<config:config-item-map-entry>");
+            sb.Append("<config:config-item-map-named config:name=\"Tables\">");
+
+            foreach (var sheet in workbook.Sheets)
+            {
+                if (sheet.FreezeRows <= 0 && sheet.FreezeColumns <= 0) continue;
+
+                sb.Append($"<config:config-item-map-entry config:name=\"{SecurityElement.Escape(sheet.SheetName)}\">");
+                sb.Append($"<config:config-item config:name=\"HorizontalSplitMode\" config:type=\"short\">2</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"VerticalSplitMode\" config:type=\"short\">2</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"HorizontalSplitPosition\" config:type=\"int\">{sheet.FreezeColumns}</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"VerticalSplitPosition\" config:type=\"int\">{sheet.FreezeRows}</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"PositionRight\" config:type=\"int\">{sheet.FreezeColumns}</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"PositionBottom\" config:type=\"int\">{sheet.FreezeRows}</config:config-item>");
+                sb.Append("</config:config-item-map-entry>");
+            }
+
+            sb.Append("</config:config-item-map-named>");
+            sb.Append("</config:config-item-map-entry>");
+            sb.Append("</config:config-item-map-indexed>");
+            sb.Append("</config:config-item-set>");
+            sb.Append("</office:settings>");
+            sb.Append("</office:document-settings>");
+
+            return Encoding.UTF8.GetBytes(sb.ToString());
         }
 
         protected virtual void Dispose(bool disposing)

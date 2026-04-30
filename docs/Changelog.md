@@ -7,9 +7,10 @@ All notable changes to Open Standard Library will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Freeze panes** — Added `FreezeRows` and `FreezeColumns` properties to `oSpreadsheet` with full generate/import support for both XLSX (`<pane>` element) and ODS (`settings.xml` config items)
 - **Cell Styling API** — New `CellStyle` class on `oCell.Style` with support for bold, italic, underline, font color, background color, font name/size, and borders (thin/medium/thick with color per edge). Styles are deduplicated and written as dynamic `styles.xml` entries in XLSX and named automatic styles in ODS
 - **Boolean cell value type** — Added `CellValueType.Boolean` with full generate/import support for both XLSX (`t="b"`) and ODS (`office:boolean-value`). Values stored as `"true"`/`"false"` strings
-- **Test project** — Added `OslSpreadsheet.Tests` with 69 xUnit tests covering workbook creation, sheet/cell operations, boolean values, cell styling, and round-trip generate/import for ODS, XLSX, and CSV formats
+- **Test project** — Added `OslSpreadsheet.Tests` with 82 xUnit tests covering workbook creation, sheet/cell operations, boolean values, cell styling, freeze panes, and round-trip generate/import for ODS, XLSX, and CSV formats
 
 ### Discovered
 - **CSV import quote-escaping bug** — Embedded double-quotes are not unescaped on import (e.g., `5"" Fitting` stays as-is instead of becoming `5" Fitting`)

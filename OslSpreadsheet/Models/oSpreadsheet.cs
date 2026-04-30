@@ -21,6 +21,10 @@
 
         public int Index { get => _index; }
 
+        public int FreezeRows { get; set; }
+
+        public int FreezeColumns { get; set; }
+
         public oCell AddCell(int row, int column)
         {
             return _AddCell(new oCell(row, column));

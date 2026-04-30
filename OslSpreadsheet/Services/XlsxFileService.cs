@@ -111,6 +111,15 @@ namespace OslSpreadsheet.Services
                 using (var sheetStream = sheetEntry.Open())
                     sheetDoc = await Task.Run(() => XDocument.Load(sheetStream));
 
+                var pane = sheetDoc.Descendants(mainNs + "pane").FirstOrDefault();
+                if (pane?.Attribute("state")?.Value == "frozen")
+                {
+                    if (int.TryParse(pane.Attribute("ySplit")?.Value, out int freezeRows))
+                        sheet.FreezeRows = freezeRows;
+                    if (int.TryParse(pane.Attribute("xSplit")?.Value, out int freezeCols))
+                        sheet.FreezeColumns = freezeCols;
+                }
+
                 foreach (var rowEl in sheetDoc.Descendants(mainNs + "row"))
                 {
                     foreach (var cellEl in rowEl.Elements(mainNs + "c"))
@@ -368,6 +377,18 @@ namespace OslSpreadsheet.Services
             var sb = new StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
             sb.Append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
+
+            if (sheet.FreezeRows > 0 || sheet.FreezeColumns > 0)
+            {
+                var topLeftCell = $"{ColumnLetter(sheet.FreezeColumns + 1)}{sheet.FreezeRows + 1}";
+                sb.Append("<sheetViews><sheetView tabSelected=\"1\" workbookViewId=\"0\">");
+                sb.Append($"<pane");
+                if (sheet.FreezeColumns > 0) sb.Append($" xSplit=\"{sheet.FreezeColumns}\"");
+                if (sheet.FreezeRows > 0) sb.Append($" ySplit=\"{sheet.FreezeRows}\"");
+                sb.Append($" topLeftCell=\"{topLeftCell}\" activePane=\"bottomRight\" state=\"frozen\"/>");
+                sb.Append("</sheetView></sheetViews>");
+            }
+
             sb.Append("<sheetData>");
 
             for (int r = 1; r <= sheet.RowCount; r++)
