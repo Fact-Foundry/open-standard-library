@@ -21,11 +21,14 @@
         public string Value { get; set; } = "";
 
         public string? Formula { get; set; }
+
+        public CellStyle? Style { get; set; }
     }
 
     public enum CellValueType
     {
         String,
-        Float
+        Float,
+        Boolean
     }
 }

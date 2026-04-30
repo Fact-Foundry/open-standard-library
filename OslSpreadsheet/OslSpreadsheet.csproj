@@ -4,7 +4,21 @@
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <PackageId>OpenStandardLibrary</PackageId>
+    <Authors>Kevin Williams</Authors>
+    <Description>A library for reading and creating spreadsheet files in ODS, XLSX, and delimited formats (CSV, TSV, pipe).</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/kupokev/open-standard-library</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/kupokev/open-standard-library</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>ods;xlsx;csv;spreadsheet;opendocument;openxml</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\"/>
+  </ItemGroup>
 
 
 </Project>

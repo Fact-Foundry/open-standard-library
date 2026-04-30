@@ -1,0 +1,34 @@
+name: Publish to NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      - name: Restore
+        run: dotnet restore OslSpreadsheet/OslSpreadsheet.csproj
+
+      - name: Build
+        run: dotnet build OslSpreadsheet/OslSpreadsheet.csproj --configuration Release --no-restore /p:Version=${{ env.VERSION }}
+
+      - name: Pack
+        run: dotnet pack OslSpreadsheet/OslSpreadsheet.csproj --configuration Release --no-build --output nupkg /p:PackageVersion=${{ env.VERSION }}
+
+      - name: Push to NuGet.org
+        run: dotnet nuget push nupkg/*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate

@@ -126,6 +126,59 @@ namespace OslSpreadsheet.Models.Files.ods
                 [XmlElement("table-properties", ElementName = "table-properties", Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
                 public TableProperties? tableProperties { get; set; }
 
+                [XmlElement("text-properties", ElementName = "text-properties", Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
+                public TextProperties? textProperties { get; set; }
+
+                [XmlElement("table-cell-properties", ElementName = "table-cell-properties", Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
+                public TableCellStyleProperties? tableCellProperties { get; set; }
+
+                [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
+                public class TextProperties
+                {
+                    [XmlAttribute("font-weight", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? FontWeight { get; set; }
+
+                    [XmlAttribute("font-style", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? FontStyle { get; set; }
+
+                    [XmlAttribute("text-underline-style", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
+                    public string? TextUnderlineStyle { get; set; }
+
+                    [XmlAttribute("text-underline-width", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
+                    public string? TextUnderlineWidth { get; set; }
+
+                    [XmlAttribute("color", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? Color { get; set; }
+
+                    [XmlAttribute("font-name", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
+                    public string? FontName { get; set; }
+
+                    [XmlAttribute("font-size", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? FontSize { get; set; }
+                }
+
+                [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
+                public class TableCellStyleProperties
+                {
+                    [XmlAttribute("background-color", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? BackgroundColor { get; set; }
+
+                    [XmlAttribute("border-top", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? BorderTop { get; set; }
+
+                    [XmlAttribute("border-bottom", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? BorderBottom { get; set; }
+
+                    [XmlAttribute("border-left", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? BorderLeft { get; set; }
+
+                    [XmlAttribute("border-right", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? BorderRight { get; set; }
+
+                    [XmlAttribute("wrap-option", Namespace = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0")]
+                    public string? WrapOption { get; set; }
+                }
+
                 [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
                 public class TableColumnProperties
                 {
@@ -213,7 +266,7 @@ namespace OslSpreadsheet.Models.Files.ods
         {
             public Table()
             {
-                tableColumn = new() { NumberColumnsRepeated = "16384" };
+                tableColumns = new List<TableColumn>() { new() { NumberColumnsRepeated = "16384" } };
                 Rows = new List<TableRow>();
             }
 
@@ -224,7 +277,7 @@ namespace OslSpreadsheet.Models.Files.ods
             public string StyleName { get; set; } = "ta1";
 
             [XmlElement("table-column", ElementName = "table-column", Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
-            public TableColumn tableColumn { get; set; }
+            public List<TableColumn> tableColumns { get; set; }
 
             [XmlElement("table-row", ElementName = "table-row", Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
             public List<TableRow> Rows { get; set; }
@@ -270,6 +323,9 @@ namespace OslSpreadsheet.Models.Files.ods
 
                     [XmlAttribute("value", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0")] // namespace:office
                     public string? NumericValue { get; set; }
+
+                    [XmlAttribute("boolean-value", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0")] // namespace:office
+                    public string? BooleanValue { get; set; }
 
                     [XmlAttribute("number-columns-repeated", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
                     public string? NumberColumnsRepeated { get; set; }

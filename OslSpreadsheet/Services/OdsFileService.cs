@@ -1,6 +1,7 @@
 ﻿using OslSpreadsheet.Models;
 using OslSpreadsheet.Models.Files.ods;
 using System.IO.Compression;
+using System.Security;
 using System.Text;
 using System.Xml.Linq;
 
@@ -55,6 +56,15 @@ namespace OslSpreadsheet.Services
                     }
                 };
 
+                if (workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0))
+                {
+                    files.Add(new InMemoryFile()
+                    {
+                        FileName = "settings.xml",
+                        Content = BuildSettingsFile(workbook)
+                    });
+                }
+
                 output = await ZipService.GenerateZipAsync(files);
             }
             catch
@@ -104,14 +114,34 @@ namespace OslSpreadsheet.Services
                         var valueType  = cell.Attribute(officeNs + "value-type")?.Value;
                         var textValue  = cell.Element(textNs + "p")?.Value;
                         var numericValue = cell.Attribute(officeNs + "value")?.Value;
+                        var booleanValue = cell.Attribute(officeNs + "boolean-value")?.Value;
                         bool hasContent = valueType != null || textValue != null;
 
                         if (hasContent)
                         {
+                            CellValueType cellType;
+                            string cellValue;
+
+                            if (valueType == "boolean")
+                            {
+                                cellType = CellValueType.Boolean;
+                                cellValue = booleanValue ?? textValue ?? "false";
+                            }
+                            else if (valueType == "float")
+                            {
+                                cellType = CellValueType.Float;
+                                cellValue = textValue ?? numericValue ?? "";
+                            }
+                            else
+                            {
+                                cellType = CellValueType.String;
+                                cellValue = textValue ?? numericValue ?? "";
+                            }
+
                             for (int i = 0; i < colsRepeated; i++)
                             {
                                 colIndex++;
-                                rowData.Add((colIndex, textValue ?? numericValue ?? "", valueType == "float" ? CellValueType.Float : CellValueType.String));
+                                rowData.Add((colIndex, cellValue, cellType));
                             }
                         }
                         else
@@ -138,12 +168,40 @@ namespace OslSpreadsheet.Services
                 }
             }
 
+            var settingsEntry = archive.GetEntry("settings.xml");
+            if (settingsEntry != null)
+            {
+                XDocument settingsDoc;
+                using (var settingsStream = settingsEntry.Open())
+                    settingsDoc = await Task.Run(() => XDocument.Load(settingsStream));
+
+                XNamespace configNs = "urn:oasis:names:tc:opendocument:xmlns:config:1.0";
+                foreach (var entry in settingsDoc.Descendants(configNs + "config-item-map-named")
+                    .Where(n => n.Attribute(configNs + "name")?.Value == "Tables")
+                    .SelectMany(n => n.Elements(configNs + "config-item-map-entry")))
+                {
+                    var tableName = entry.Attribute(configNs + "name")?.Value;
+                    var sheet = workbook.Sheets.FirstOrDefault(s => s.SheetName == tableName);
+                    if (sheet == null) continue;
+
+                    var items = entry.Elements(configNs + "config-item")
+                        .ToDictionary(e => e.Attribute(configNs + "name")?.Value ?? "", e => e.Value);
+
+                    if (items.TryGetValue("VerticalSplitPosition", out var vsp) && int.TryParse(vsp, out int freezeRows))
+                        sheet.FreezeRows = freezeRows;
+                    if (items.TryGetValue("HorizontalSplitPosition", out var hsp) && int.TryParse(hsp, out int freezeCols))
+                        sheet.FreezeColumns = freezeCols;
+                }
+            }
+
             return workbook;
         }
 
         private ODContent GenerateContentFile(oWorkbook workbook)
         {
             var file = new ODContent();
+
+            var cellStyleMap = BuildOdsCellStyles(workbook, file);
 
             foreach (var s in workbook.Sheets)
             {
@@ -164,6 +222,36 @@ namespace OslSpreadsheet.Services
                     StyleName = styleName
                 };
 
+                if (s.ColumnWidths.Any())
+                {
+                    table.tableColumns.Clear();
+                    int colCount = s.Cells.Any() ? s.ColumnCount : 0;
+                    int maxCol = Math.Max(colCount, s.ColumnWidths.Any() ? s.ColumnWidths.Keys.Max() : 0);
+
+                    for (int c = 1; c <= maxCol; c++)
+                    {
+                        if (s.ColumnWidths.TryGetValue(c, out double width))
+                        {
+                            var colStyleName = $"co{s.Index}c{c}";
+                            file.automaticStyles.automaticStyles.Add(new ODContent.AutomaticStyles.Style()
+                            {
+                                Name = colStyleName,
+                                Family = "table-column",
+                                tableColumnProperties = new() { ColumnWidth = $"{CharsToOdsCm(width)}cm" }
+                            });
+                            table.tableColumns.Add(new ODContent.Table.TableColumn() { StyleName = colStyleName, NumberColumnsRepeated = "" });
+                        }
+                        else
+                        {
+                            table.tableColumns.Add(new ODContent.Table.TableColumn() { NumberColumnsRepeated = "" });
+                        }
+                    }
+
+                    int remaining = 16384 - maxCol;
+                    if (remaining > 0)
+                        table.tableColumns.Add(new ODContent.Table.TableColumn() { NumberColumnsRepeated = remaining.ToString() });
+                }
+
                 if (s.Cells.Any())
                 {
                     int rowCount = s.RowCount;
@@ -179,9 +267,17 @@ namespace OslSpreadsheet.Services
 
                             if (cell != null)
                             {
+                                var cellStyleName = "ce1";
+                                if (cell.Style != null)
+                                {
+                                    var key = GetStyleKey(cell.Style);
+                                    if (cellStyleMap.TryGetValue(key, out var mapped))
+                                        cellStyleName = mapped;
+                                }
+
                                 var tableCell = new ODContent.Table.TableRow.TableCell()
                                 {
-                                    StyleName = "ce1",
+                                    StyleName = cellStyleName,
                                     TextValue = cell.Value
                                 };
 
@@ -189,6 +285,11 @@ namespace OslSpreadsheet.Services
                                 {
                                     tableCell.ValueType = "float";
                                     tableCell.NumericValue = cell.Value;
+                                }
+                                else if (cell.ValueType == CellValueType.Boolean)
+                                {
+                                    tableCell.ValueType = "boolean";
+                                    tableCell.BooleanValue = cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "true" : "false";
                                 }
                                 else
                                 {
@@ -296,6 +397,120 @@ namespace OslSpreadsheet.Services
             }
 
             return file;
+        }
+
+        private static Dictionary<string, string> BuildOdsCellStyles(oWorkbook workbook, ODContent file)
+        {
+            var map = new Dictionary<string, string>();
+            var nextIndex = 2;
+
+            foreach (var sheet in workbook.Sheets)
+                foreach (var cell in sheet.Cells)
+                    if (cell.Style != null)
+                    {
+                        var key = GetStyleKey(cell.Style);
+                        if (map.ContainsKey(key)) continue;
+
+                        var name = $"ce{nextIndex++}";
+                        map[key] = name;
+
+                        var style = new ODContent.AutomaticStyles.Style
+                        {
+                            Name = name,
+                            Family = "table-cell",
+                            ParentStyleName = "Default",
+                            DataStyleName = "N0"
+                        };
+
+                        var cs = cell.Style;
+
+                        if (cs.Bold || cs.Italic || cs.Underline || cs.FontColor != null || cs.FontName != null || cs.FontSize != null)
+                        {
+                            style.textProperties = new ODContent.AutomaticStyles.Style.TextProperties();
+                            if (cs.Bold) style.textProperties.FontWeight = "bold";
+                            if (cs.Italic) style.textProperties.FontStyle = "italic";
+                            if (cs.Underline)
+                            {
+                                style.textProperties.TextUnderlineStyle = "solid";
+                                style.textProperties.TextUnderlineWidth = "auto";
+                            }
+                            if (cs.FontColor != null) style.textProperties.Color = cs.FontColor;
+                            if (cs.FontName != null) style.textProperties.FontName = cs.FontName;
+                            if (cs.FontSize != null) style.textProperties.FontSize = $"{cs.FontSize}pt";
+                        }
+
+                        if (cs.BackgroundColor != null || cs.BorderTop != null || cs.BorderBottom != null || cs.BorderLeft != null || cs.BorderRight != null || cs.WrapText)
+                        {
+                            style.tableCellProperties = new ODContent.AutomaticStyles.Style.TableCellStyleProperties();
+                            if (cs.BackgroundColor != null) style.tableCellProperties.BackgroundColor = cs.BackgroundColor;
+                            if (cs.BorderTop != null) style.tableCellProperties.BorderTop = FormatOdsBorder(cs.BorderTop);
+                            if (cs.BorderBottom != null) style.tableCellProperties.BorderBottom = FormatOdsBorder(cs.BorderBottom);
+                            if (cs.BorderLeft != null) style.tableCellProperties.BorderLeft = FormatOdsBorder(cs.BorderLeft);
+                            if (cs.BorderRight != null) style.tableCellProperties.BorderRight = FormatOdsBorder(cs.BorderRight);
+                            if (cs.WrapText) style.tableCellProperties.WrapOption = "wrap";
+                        }
+
+                        file.automaticStyles.automaticStyles.Add(style);
+                    }
+
+            return map;
+        }
+
+        private static string GetStyleKey(CellStyle s) =>
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+
+        private static string EdgeKey(CellBorder? b) =>
+            b == null ? "" : $"{b.Style}:{b.Color}";
+
+        private static double CharsToOdsCm(double chars) => Math.Round(chars * (1.69333333333333 / 8.43), 4);
+
+        private static string FormatOdsBorder(CellBorder b)
+        {
+            if (b.Style == BorderStyle.None) return "none";
+            var width = b.Style switch
+            {
+                BorderStyle.Thin => "0.75pt",
+                BorderStyle.Medium => "1.5pt",
+                BorderStyle.Thick => "2.5pt",
+                _ => "0.75pt"
+            };
+            var color = b.Color ?? "#000000";
+            return $"{width} solid {color}";
+        }
+
+        private static byte[] BuildSettingsFile(oWorkbook workbook)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            sb.Append("<office:document-settings xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:config=\"urn:oasis:names:tc:opendocument:xmlns:config:1.0\" office:version=\"1.3\">");
+            sb.Append("<office:settings>");
+            sb.Append("<config:config-item-set config:name=\"ooo:view-settings\">");
+            sb.Append("<config:config-item-map-indexed config:name=\"Views\">");
+            sb.Append("<config:config-item-map-entry>");
+            sb.Append("<config:config-item-map-named config:name=\"Tables\">");
+
+            foreach (var sheet in workbook.Sheets)
+            {
+                if (sheet.FreezeRows <= 0 && sheet.FreezeColumns <= 0) continue;
+
+                sb.Append($"<config:config-item-map-entry config:name=\"{SecurityElement.Escape(sheet.SheetName)}\">");
+                sb.Append($"<config:config-item config:name=\"HorizontalSplitMode\" config:type=\"short\">2</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"VerticalSplitMode\" config:type=\"short\">2</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"HorizontalSplitPosition\" config:type=\"int\">{sheet.FreezeColumns}</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"VerticalSplitPosition\" config:type=\"int\">{sheet.FreezeRows}</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"PositionRight\" config:type=\"int\">{sheet.FreezeColumns}</config:config-item>");
+                sb.Append($"<config:config-item config:name=\"PositionBottom\" config:type=\"int\">{sheet.FreezeRows}</config:config-item>");
+                sb.Append("</config:config-item-map-entry>");
+            }
+
+            sb.Append("</config:config-item-map-named>");
+            sb.Append("</config:config-item-map-entry>");
+            sb.Append("</config:config-item-map-indexed>");
+            sb.Append("</config:config-item-set>");
+            sb.Append("</office:settings>");
+            sb.Append("</office:document-settings>");
+
+            return Encoding.UTF8.GetBytes(sb.ToString());
         }
 
         protected virtual void Dispose(bool disposing)

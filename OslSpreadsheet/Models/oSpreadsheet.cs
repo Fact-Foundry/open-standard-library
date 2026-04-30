@@ -6,11 +6,15 @@
 
         private readonly List<oCell> _cells;
 
+        private readonly Dictionary<int, double> _columnWidths;
+
         public oSpreadsheet(int index, string name)
         {
             _index = index;
 
             _cells = new();
+
+            _columnWidths = new();
 
             SheetName = name;
         }
@@ -20,6 +24,34 @@
         public List<oCell> Cells { get => _cells; }
 
         public int Index { get => _index; }
+
+        public int FreezeRows { get; set; }
+
+        public int FreezeColumns { get; set; }
+
+        public Dictionary<int, double> ColumnWidths { get => _columnWidths; }
+
+        public void SetColumnWidth(int column, double width)
+        {
+            _columnWidths[column] = width;
+        }
+
+        public void AutoFitColumns(double minWidth = 8, double maxWidth = 100)
+        {
+            if (!_cells.Any()) return;
+
+            for (int c = 1; c <= ColumnCount; c++)
+            {
+                var maxLength = _cells
+                    .Where(x => x.Column == c)
+                    .Select(x => x.Value.Length)
+                    .DefaultIfEmpty(0)
+                    .Max();
+
+                var width = Math.Clamp(maxLength + 2, minWidth, maxWidth);
+                _columnWidths[c] = width;
+            }
+        }
 
         public oCell AddCell(int row, int column)
         {
