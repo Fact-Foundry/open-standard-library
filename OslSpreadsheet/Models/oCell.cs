@@ -26,6 +26,7 @@
     public enum CellValueType
     {
         String,
-        Float
+        Float,
+        Boolean
     }
 }

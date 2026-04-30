@@ -104,14 +104,34 @@ namespace OslSpreadsheet.Services
                         var valueType  = cell.Attribute(officeNs + "value-type")?.Value;
                         var textValue  = cell.Element(textNs + "p")?.Value;
                         var numericValue = cell.Attribute(officeNs + "value")?.Value;
+                        var booleanValue = cell.Attribute(officeNs + "boolean-value")?.Value;
                         bool hasContent = valueType != null || textValue != null;
 
                         if (hasContent)
                         {
+                            CellValueType cellType;
+                            string cellValue;
+
+                            if (valueType == "boolean")
+                            {
+                                cellType = CellValueType.Boolean;
+                                cellValue = booleanValue ?? textValue ?? "false";
+                            }
+                            else if (valueType == "float")
+                            {
+                                cellType = CellValueType.Float;
+                                cellValue = textValue ?? numericValue ?? "";
+                            }
+                            else
+                            {
+                                cellType = CellValueType.String;
+                                cellValue = textValue ?? numericValue ?? "";
+                            }
+
                             for (int i = 0; i < colsRepeated; i++)
                             {
                                 colIndex++;
-                                rowData.Add((colIndex, textValue ?? numericValue ?? "", valueType == "float" ? CellValueType.Float : CellValueType.String));
+                                rowData.Add((colIndex, cellValue, cellType));
                             }
                         }
                         else
@@ -189,6 +209,11 @@ namespace OslSpreadsheet.Services
                                 {
                                     tableCell.ValueType = "float";
                                     tableCell.NumericValue = cell.Value;
+                                }
+                                else if (cell.ValueType == CellValueType.Boolean)
+                                {
+                                    tableCell.ValueType = "boolean";
+                                    tableCell.BooleanValue = cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "true" : "false";
                                 }
                                 else
                                 {

@@ -135,6 +135,10 @@ namespace OslSpreadsheet.Services
                             case "str": // formula string result
                                 value = rawValue;
                                 break;
+                            case "b": // boolean
+                                value = rawValue == "1" ? "true" : "false";
+                                valueType = CellValueType.Boolean;
+                                break;
                             default: // number
                                 value = rawValue;
                                 if (!string.IsNullOrEmpty(value))
@@ -244,6 +248,8 @@ namespace OslSpreadsheet.Services
                     var cellRef = $"{ColumnLetter(cell.Column)}{cell.Row}";
                     if (cell.ValueType == CellValueType.Float)
                         sb.Append($"<c r=\"{cellRef}\"><v>{SecurityElement.Escape(cell.Value)}</v></c>");
+                    else if (cell.ValueType == CellValueType.Boolean)
+                        sb.Append($"<c r=\"{cellRef}\" t=\"b\"><v>{(cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "1" : "0")}</v></c>");
                     else
                         sb.Append($"<c r=\"{cellRef}\" t=\"inlineStr\"><is><t>{SecurityElement.Escape(cell.Value)}</t></is></c>");
                 }

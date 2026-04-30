@@ -294,6 +294,78 @@ public class RoundTripTests
         Assert.Equal("5\"\" Fitting", imported.GetRow(1).First(c => c.Column == 1).Value);
     }
 
+    // --- Boolean ---
+
+    [Fact]
+    public async Task Xlsx_RoundTrip_PreservesBooleanValues()
+    {
+        using var spreadsheet = new Spreadsheet();
+        var sheet = spreadsheet.Workbook.AddSheet("Data");
+        sheet.AddCell(1, 1, "Flag");
+        sheet.AddCell(1, 2, "Active");
+        sheet.AddCell(2, 1, "true", CellValueType.Boolean);
+        sheet.AddCell(2, 2, "false", CellValueType.Boolean);
+
+        var bytes = await spreadsheet.GenerateXlsxFileAsync();
+
+        using var importer = new Spreadsheet();
+        var workbook = await importer.ImportXlsxFileAsync(bytes);
+        var imported = workbook.Sheets[0];
+
+        var trueCell = imported.GetRow(2).First(c => c.Column == 1);
+        Assert.Equal("true", trueCell.Value);
+        Assert.Equal(CellValueType.Boolean, trueCell.ValueType);
+
+        var falseCell = imported.GetRow(2).First(c => c.Column == 2);
+        Assert.Equal("false", falseCell.Value);
+        Assert.Equal(CellValueType.Boolean, falseCell.ValueType);
+    }
+
+    [Fact]
+    public async Task Ods_RoundTrip_PreservesBooleanValues()
+    {
+        using var spreadsheet = new Spreadsheet();
+        var sheet = spreadsheet.Workbook.AddSheet("Data");
+        sheet.AddCell(1, 1, "Flag");
+        sheet.AddCell(1, 2, "Active");
+        sheet.AddCell(2, 1, "true", CellValueType.Boolean);
+        sheet.AddCell(2, 2, "false", CellValueType.Boolean);
+
+        var bytes = await spreadsheet.GenerateOdsFileAsync();
+
+        using var importer = new Spreadsheet();
+        var workbook = await importer.ImportOdsFileAsync(bytes);
+        var imported = workbook.Sheets[0];
+
+        var trueCell = imported.GetRow(2).First(c => c.Column == 1);
+        Assert.Equal("true", trueCell.Value);
+        Assert.Equal(CellValueType.Boolean, trueCell.ValueType);
+
+        var falseCell = imported.GetRow(2).First(c => c.Column == 2);
+        Assert.Equal("false", falseCell.Value);
+        Assert.Equal(CellValueType.Boolean, falseCell.ValueType);
+    }
+
+    [Fact]
+    public async Task Xlsx_RoundTrip_BooleanMixedWithOtherTypes()
+    {
+        using var spreadsheet = new Spreadsheet();
+        var sheet = spreadsheet.Workbook.AddSheet("Mixed");
+        sheet.AddCell(1, 1, "Label", CellValueType.String);
+        sheet.AddCell(1, 2, "42.5", CellValueType.Float);
+        sheet.AddCell(1, 3, "true", CellValueType.Boolean);
+
+        var bytes = await spreadsheet.GenerateXlsxFileAsync();
+
+        using var importer = new Spreadsheet();
+        var workbook = await importer.ImportXlsxFileAsync(bytes);
+        var row = workbook.Sheets[0].GetRow(1);
+
+        Assert.Equal(CellValueType.String, row.First(c => c.Column == 1).ValueType);
+        Assert.Equal(CellValueType.Float, row.First(c => c.Column == 2).ValueType);
+        Assert.Equal(CellValueType.Boolean, row.First(c => c.Column == 3).ValueType);
+    }
+
     // --- Empty workbook ---
 
     [Fact]

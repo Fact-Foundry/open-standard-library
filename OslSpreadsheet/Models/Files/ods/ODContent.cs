@@ -271,6 +271,9 @@ namespace OslSpreadsheet.Models.Files.ods
                     [XmlAttribute("value", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0")] // namespace:office
                     public string? NumericValue { get; set; }
 
+                    [XmlAttribute("boolean-value", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0")] // namespace:office
+                    public string? BooleanValue { get; set; }
+
                     [XmlAttribute("number-columns-repeated", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
                     public string? NumberColumnsRepeated { get; set; }
 

@@ -53,6 +53,17 @@ public class CellTests
     }
 
     [Fact]
+    public void Cell_SetValueType_Boolean()
+    {
+        var cell = new oCell(1, 1);
+        cell.Value = "true";
+        cell.ValueType = CellValueType.Boolean;
+
+        Assert.Equal(CellValueType.Boolean, cell.ValueType);
+        Assert.Equal("true", cell.Value);
+    }
+
+    [Fact]
     public void AsFloat_SetsValueAndType()
     {
         var cell = new oCell(1, 1);
