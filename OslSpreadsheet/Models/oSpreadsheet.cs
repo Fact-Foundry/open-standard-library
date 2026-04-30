@@ -64,31 +64,31 @@
             {
                 lock (this)
                 {
-                    var e = Cells.FirstOrDefault(x => x.Row == cell.Row && x.Column == cell.Column);
+                    var index = Cells.FindIndex(x => x.Row == cell.Row && x.Column == cell.Column);
 
-                    if (e == null)
+                    if (index == -1)
                         Cells.Add(cell);
                     else
-                        e = cell;
+                        Cells[index] = cell;
 
-                    return e ?? cell;
+                    return cell;
                 }
             }
             catch
             {
-                throw new Exception("There was an error addind a new worksheet to the workbook");
+                throw new Exception("There was an error adding a new cell to the spreadsheet");
             }
         }
 
         /// <summary>
         /// Get a count of columns in a spreadsheet
         /// </summary>
-        public int ColumnCount { get => _cells.Max(x => x.Column); }
+        public int ColumnCount { get => _cells.Any() ? _cells.Max(x => x.Column) : 0; }
 
         /// <summary>
         /// Get a count of rows in the spreadsheet
         /// </summary>
-        public int RowCount { get => _cells.Max(x => x.Row); }
+        public int RowCount { get => _cells.Any() ? _cells.Max(x => x.Row) : 0; }
 
         /// <summary>
         /// Get all cells from a particular row

@@ -14,6 +14,10 @@ namespace OoxSpreadsheet
         Task<byte[]> GenerateXlsxFileAsync();
 
         Task<oWorkbook> ImportCsvFileAsync(byte[] file);
+
+        Task<oWorkbook> ImportOdsFileAsync(byte[] file);
+
+        Task<oWorkbook> ImportXlsxFileAsync(byte[] file);
     }
 
     public class Spreadsheet : ISpreadsheet
@@ -52,6 +56,24 @@ namespace OoxSpreadsheet
         public async Task<oWorkbook> ImportCsvFileAsync(byte[] file)
         {
             IFileService _fileService = new DelimitedFileService();
+
+            _workbook = await _fileService.GenerateModel(file);
+
+            return _workbook;
+        }
+
+        public async Task<oWorkbook> ImportOdsFileAsync(byte[] file)
+        {
+            IFileService _fileService = new OdsFileService();
+
+            _workbook = await _fileService.GenerateModel(file);
+
+            return _workbook;
+        }
+
+        public async Task<oWorkbook> ImportXlsxFileAsync(byte[] file)
+        {
+            IFileService _fileService = new XlsxFileService();
 
             _workbook = await _fileService.GenerateModel(file);
 

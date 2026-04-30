@@ -36,9 +36,6 @@ namespace OslSpreadsheet.Services
 
                 var result = Encoding.UTF8.GetString(file);
 
-                Console.WriteLine(result.Replace("utf-8", "UTF-8"));
-                Console.WriteLine(" ");
-
                 return Encoding.UTF8.GetBytes(result.Replace("utf-8", "UTF-8").Replace("\" />", "\"/>"));
 
                 //return file;

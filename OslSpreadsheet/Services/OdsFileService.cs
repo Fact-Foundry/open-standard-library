@@ -1,6 +1,8 @@
 ﻿using OslSpreadsheet.Models;
 using OslSpreadsheet.Models.Files.ods;
+using System.IO.Compression;
 using System.Text;
+using System.Xml.Linq;
 
 namespace OslSpreadsheet.Services
 {
@@ -65,7 +67,78 @@ namespace OslSpreadsheet.Services
 
         public async Task<oWorkbook> GenerateModel(byte[] file)
         {
-            throw new NotImplementedException();
+            oWorkbook workbook = new();
+
+            using var ms = new MemoryStream(file);
+            using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+
+            var contentEntry = archive.GetEntry("content.xml")
+                ?? throw new InvalidOperationException("Invalid ODS file: missing content.xml");
+
+            XDocument doc;
+            using (var contentStream = contentEntry.Open())
+                doc = await Task.Run(() => XDocument.Load(contentStream));
+
+            XNamespace tableNs  = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
+            XNamespace officeNs = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
+            XNamespace textNs   = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+
+            foreach (var table in doc.Descendants(tableNs + "table"))
+            {
+                var sheetName = table.Attribute(tableNs + "name")?.Value ?? "Sheet";
+                var sheet = workbook.AddSheet(sheetName);
+
+                int rowIndex = 0;
+
+                foreach (var tableRow in table.Elements(tableNs + "table-row"))
+                {
+                    int rowsRepeated = int.TryParse(tableRow.Attribute(tableNs + "number-rows-repeated")?.Value, out int rr) ? rr : 1;
+
+                    var rowData = new List<(int col, string value, CellValueType type)>();
+                    int colIndex = 0;
+
+                    foreach (var cell in tableRow.Elements(tableNs + "table-cell"))
+                    {
+                        int colsRepeated = int.TryParse(cell.Attribute(tableNs + "number-columns-repeated")?.Value, out int cr) ? cr : 1;
+
+                        var valueType  = cell.Attribute(officeNs + "value-type")?.Value;
+                        var textValue  = cell.Element(textNs + "p")?.Value;
+                        var numericValue = cell.Attribute(officeNs + "value")?.Value;
+                        bool hasContent = valueType != null || textValue != null;
+
+                        if (hasContent)
+                        {
+                            for (int i = 0; i < colsRepeated; i++)
+                            {
+                                colIndex++;
+                                rowData.Add((colIndex, textValue ?? numericValue ?? "", valueType == "float" ? CellValueType.Float : CellValueType.String));
+                            }
+                        }
+                        else
+                        {
+                            colIndex += colsRepeated;
+                        }
+                    }
+
+                    if (rowData.Count == 0)
+                    {
+                        rowIndex += rowsRepeated;
+                        continue;
+                    }
+
+                    for (int r = 0; r < rowsRepeated; r++)
+                    {
+                        rowIndex++;
+                        foreach (var (col, value, type) in rowData)
+                        {
+                            var oCell = sheet.AddCell(rowIndex, col, value);
+                            oCell.ValueType = type;
+                        }
+                    }
+                }
+            }
+
+            return workbook;
         }
 
         private ODContent GenerateContentFile(oWorkbook workbook)
@@ -85,11 +158,90 @@ namespace OslSpreadsheet.Services
                     tableProperties = new()
                 });
 
-                file.body.spreadsheet.Tables.Add(new ODContent.Table()
+                var table = new ODContent.Table()
                 {
                     Name = s.SheetName,
                     StyleName = styleName
-                });
+                };
+
+                if (s.Cells.Any())
+                {
+                    int rowCount = s.RowCount;
+                    int colCount = s.ColumnCount;
+
+                    for (int r = 1; r <= rowCount; r++)
+                    {
+                        var tableRow = new ODContent.Table.TableRow();
+
+                        for (int c = 1; c <= colCount; c++)
+                        {
+                            var cell = s.Cells.FirstOrDefault(x => x.Row == r && x.Column == c);
+
+                            if (cell != null)
+                            {
+                                var tableCell = new ODContent.Table.TableRow.TableCell()
+                                {
+                                    StyleName = "ce1",
+                                    TextValue = cell.Value
+                                };
+
+                                if (cell.ValueType == CellValueType.Float)
+                                {
+                                    tableCell.ValueType = "float";
+                                    tableCell.NumericValue = cell.Value;
+                                }
+                                else
+                                {
+                                    tableCell.ValueType = "string";
+                                }
+
+                                tableRow.Cells.Add(tableCell);
+                            }
+                            else
+                            {
+                                tableRow.Cells.Add(new ODContent.Table.TableRow.TableCell());
+                            }
+                        }
+
+                        // Trailing empty columns filler
+                        tableRow.Cells.Add(new ODContent.Table.TableRow.TableCell()
+                        {
+                            NumberColumnsRepeated = (16384 - colCount).ToString()
+                        });
+
+                        table.Rows.Add(tableRow);
+                    }
+
+                    // Trailing empty rows filler
+                    table.Rows.Add(new ODContent.Table.TableRow()
+                    {
+                        NumberRowsRepeated = (1048577 - rowCount).ToString(),
+                        Cells = new List<ODContent.Table.TableRow.TableCell>()
+                        {
+                            new ODContent.Table.TableRow.TableCell()
+                            {
+                                NumberColumnsRepeated = "16384"
+                            }
+                        }
+                    });
+                }
+                else
+                {
+                    // Empty sheet — filler row
+                    table.Rows.Add(new ODContent.Table.TableRow()
+                    {
+                        NumberRowsRepeated = "1048577",
+                        Cells = new List<ODContent.Table.TableRow.TableCell>()
+                        {
+                            new ODContent.Table.TableRow.TableCell()
+                            {
+                                NumberColumnsRepeated = "16384"
+                            }
+                        }
+                    });
+                }
+
+                file.body.spreadsheet.Tables.Add(table);
             }
 
             return file;

@@ -15,12 +15,8 @@ using IHost host = Host.CreateDefaultBuilder(args)
 
 // Begin test code:
 
-// Generate spreadsheet
-//await TestOds();
-
-await TestGenerateCsv();
-
-//await TestImportCsv();
+await TestRoundTripOds();
+await TestRoundTripXlsx();
 
 
 // Run the application
@@ -98,7 +94,59 @@ async Task TestGenerateOds()
         var odsFile = await spreadsheet.GenerateOdsFileAsync();
 
         // Save compressed file
-        await File.WriteAllBytesAsync(@"C:\Temp\New File.ods", odsFile);
+        await File.WriteAllBytesAsync(@"/tmp/test.ods", odsFile);
+    }
+}
+
+async Task TestRoundTripOds()
+{
+    await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
+    {
+        var workbook = spreadsheet.Workbook;
+        var sheet1 = await workbook.AddSheetAsync("Data");
+        sheet1.AddCell(1, 1, "Name");
+        sheet1.AddCell(1, 2, "Score");
+        sheet1.AddCell(2, 1, "Alice");
+        sheet1.AddCell(2, 2, "95.5", CellValueType.Float);
+        sheet1.AddCell(3, 1, "Bob");
+        sheet1.AddCell(3, 2, "82.0", CellValueType.Float);
+
+        var odsFile = await spreadsheet.GenerateOdsFileAsync();
+        var imported = await spreadsheet.ImportOdsFileAsync(odsFile);
+
+        Console.WriteLine("=== ODS Round-trip ===");
+        foreach (var sheet in imported.Sheets)
+        {
+            Console.WriteLine($"Sheet: {sheet.SheetName}");
+            foreach (var cell in sheet.Cells)
+                Console.WriteLine($"  [{cell.Row},{cell.Column}] ({cell.ValueType}) = {cell.Value}");
+        }
+    }
+}
+
+async Task TestRoundTripXlsx()
+{
+    await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
+    {
+        var workbook = spreadsheet.Workbook;
+        var sheet1 = await workbook.AddSheetAsync("Data");
+        sheet1.AddCell(1, 1, "Name");
+        sheet1.AddCell(1, 2, "Score");
+        sheet1.AddCell(2, 1, "Alice");
+        sheet1.AddCell(2, 2, "95.5", CellValueType.Float);
+        sheet1.AddCell(3, 1, "Bob");
+        sheet1.AddCell(3, 2, "82.0", CellValueType.Float);
+
+        var xlsxFile = await spreadsheet.GenerateXlsxFileAsync();
+        var imported = await spreadsheet.ImportXlsxFileAsync(xlsxFile);
+
+        Console.WriteLine("=== XLSX Round-trip ===");
+        foreach (var sheet in imported.Sheets)
+        {
+            Console.WriteLine($"Sheet: {sheet.SheetName}");
+            foreach (var cell in sheet.Cells)
+                Console.WriteLine($"  [{cell.Row},{cell.Column}] ({cell.ValueType}) = {cell.Value}");
+        }
     }
 }
 
@@ -125,6 +173,6 @@ async Task TestGenerateXlsx()
         var xlsxFile = await spreadsheet.GenerateXlsxFileAsync();
 
         // Save compressed file
-        await File.WriteAllBytesAsync(@"C:\Temp\New File (XLSX).xlsx", xlsxFile);
+        await File.WriteAllBytesAsync(@"/tmp/test.xlsx", xlsxFile);
     }
 }
