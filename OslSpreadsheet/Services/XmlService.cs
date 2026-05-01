@@ -14,11 +14,12 @@ namespace OslSpreadsheet.Services
                 XmlSerializer serializer = new(obj.GetType());
 
                 // Settings
+                var utf8NoBom = new UTF8Encoding(false);
                 var settings = new XmlWriterSettings
                 {
                     Indent = false,
                     OmitXmlDeclaration = false,
-                    Encoding = Encoding.UTF8,
+                    Encoding = utf8NoBom,
                     DoNotEscapeUriAttributes = true
                 };
 
@@ -28,7 +29,6 @@ namespace OslSpreadsheet.Services
                 // Generate memory stream
                 await using MemoryStream memoryStream = new();
                 using var streamWriter = XmlWriter.Create(memoryStream, settings);
-                streamWriter.WriteStartDocument(true);
 
                 serializer.Serialize(streamWriter, obj, ns);
 

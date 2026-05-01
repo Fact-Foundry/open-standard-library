@@ -29,11 +29,24 @@
 
         public int FreezeColumns { get; set; }
 
+        public (int StartRow, int StartCol, int EndRow, int EndCol)? AutoFilterRange { get; set; }
+
         public Dictionary<int, double> ColumnWidths { get => _columnWidths; }
 
         public void SetColumnWidth(int column, double width)
         {
             _columnWidths[column] = width;
+        }
+
+        public void SetAutoFilter()
+        {
+            if (!_cells.Any()) return;
+            AutoFilterRange = (1, 1, RowCount, ColumnCount);
+        }
+
+        public void SetAutoFilter(int startRow, int startCol, int endRow, int endCol)
+        {
+            AutoFilterRange = (startRow, startCol, endRow, endCol);
         }
 
         public void AutoFitColumns(double minWidth = 8, double maxWidth = 100)

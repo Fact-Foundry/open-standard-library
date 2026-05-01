@@ -117,7 +117,7 @@ namespace OslSpreadsheet.Models.Files.ods
                 [XmlAttribute("master-page-name", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
                 public string? MasterPageName { get; set; }
 
-                [XmlElement("table-column-properties", ElementName = "table-column-properties")]
+                [XmlElement("table-column-properties", ElementName = "table-column-properties", Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
                 public TableColumnProperties? tableColumnProperties { get; set; }
 
                 [XmlElement("table-row-properties", ElementName = "table-row-properties", Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
@@ -240,6 +240,29 @@ namespace OslSpreadsheet.Models.Files.ods
                 [XmlElement("table", ElementName = "table", Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
                 public List<Table> Tables { get; set; }
 
+                [XmlElement("database-ranges", ElementName = "database-ranges", Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
+                public DatabaseRanges? databaseRanges { get; set; }
+
+                [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
+                public class DatabaseRanges
+                {
+                    [XmlElement("database-range", ElementName = "database-range", Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
+                    public List<DatabaseRange> Ranges { get; set; } = new();
+
+                    [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
+                    public class DatabaseRange
+                    {
+                        [XmlAttribute("name", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
+                        public string? Name { get; set; }
+
+                        [XmlAttribute("target-range-address", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
+                        public string? TargetRangeAddress { get; set; }
+
+                        [XmlAttribute("display-filter-buttons", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
+                        public string? DisplayFilterButtons { get; set; }
+                    }
+                }
+
                 [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
                 public class CalculationSettings
                 {
@@ -266,7 +289,7 @@ namespace OslSpreadsheet.Models.Files.ods
         {
             public Table()
             {
-                tableColumns = new List<TableColumn>() { new() { NumberColumnsRepeated = "16384" } };
+                tableColumns = new List<TableColumn>() { new TableColumn() { NumberColumnsRepeated = "16384" } };
                 Rows = new List<TableRow>();
             }
 
@@ -289,7 +312,7 @@ namespace OslSpreadsheet.Models.Files.ods
                 public string StyleName { get; set; } = "co1";
 
                 [XmlAttribute("number-columns-repeated", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
-                public string NumberColumnsRepeated { get; set; } = "";
+                public string? NumberColumnsRepeated { get; set; }
 
                 [XmlAttribute("default-cell-style-name", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
                 public string DefaultCellStyleName { get; set; } = "ce1";

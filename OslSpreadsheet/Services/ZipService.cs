@@ -12,7 +12,8 @@ namespace OslSpreadsheet.Services
             {
                 foreach (var file in files)
                 {
-                    var zipArchiveEntry = archive.CreateEntry(file.FileName, CompressionLevel.Fastest);
+                    var level = file.Store ? CompressionLevel.NoCompression : CompressionLevel.Fastest;
+                    var zipArchiveEntry = archive.CreateEntry(file.FileName, level);
                     using var zipStream = zipArchiveEntry.Open();
                     zipStream.Write(file.Content, 0, file.Content.Length);
                 }
@@ -33,7 +34,8 @@ namespace OslSpreadsheet.Services
             {
                 foreach (var file in files)
                 {
-                    var zipArchiveEntry = archive.CreateEntry(file.FileName, CompressionLevel.Fastest);
+                    var level = file.Store ? CompressionLevel.NoCompression : CompressionLevel.Fastest;
+                    var zipArchiveEntry = archive.CreateEntry(file.FileName, level);
                     using var zipStream = zipArchiveEntry.Open();
                     zipStream.Write(file.Content, 0, file.Content.Length);
                 }
