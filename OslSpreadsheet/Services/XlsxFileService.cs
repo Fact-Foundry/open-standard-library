@@ -161,6 +161,18 @@ namespace OslSpreadsheet.Services
                         oCell.ValueType = valueType;
                     }
                 }
+
+                var autoFilter = sheetDoc.Descendants(mainNs + "autoFilter").FirstOrDefault();
+                if (autoFilter?.Attribute("ref")?.Value is string afRef)
+                {
+                    var parts = afRef.Split(':');
+                    if (parts.Length == 2)
+                    {
+                        var (startRow, startCol) = ParseCellRef(parts[0]);
+                        var (endRow, endCol) = ParseCellRef(parts[1]);
+                        sheet.AutoFilterRange = (startRow, startCol, endRow, endCol);
+                    }
+                }
             }
 
             return workbook;
@@ -435,6 +447,10 @@ namespace OslSpreadsheet.Services
             }
 
             sb.Append("</sheetData>");
+
+            if (sheet.AutoFilterRange is var (sr, sc, er, ec))
+                sb.Append($"<autoFilter ref=\"{ColumnLetter(sc)}{sr}:{ColumnLetter(ec)}{er}\"/>");
+
             sb.Append("</worksheet>");
             return Utf8(sb.ToString());
         }

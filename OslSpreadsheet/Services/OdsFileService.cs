@@ -26,13 +26,25 @@ namespace OslSpreadsheet.Services
                 var meta = GenerateMetaFile(workbook);
                 var style = GenerateStyleFile(workbook);
 
+                var manifest = new ODManifest();
+                bool hasSettings = workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0);
+                if (hasSettings)
+                    manifest.fileEntries.Add(new ODManifest.FileEntry() { FullPath = "settings.xml", MediaType = "text/xml" });
+
                 // Add models to a file list for compression
+                // mimetype must be first and uncompressed per ODS spec
                 List<InMemoryFile> files = new()
                 {
                     new InMemoryFile()
                     {
+                        FileName = "mimetype",
+                        Content = Encoding.ASCII.GetBytes("application/vnd.oasis.opendocument.spreadsheet"),
+                        Store = true
+                    },
+                    new InMemoryFile()
+                    {
                         FileName = "META-INF/manifest.xml",
-                        Content = await XmlService.ConvertToXmlAsync(new ODManifest())
+                        Content = await XmlService.ConvertToXmlAsync(manifest)
                     },
                     new InMemoryFile()
                     {
@@ -46,17 +58,12 @@ namespace OslSpreadsheet.Services
                     },
                     new InMemoryFile()
                     {
-                        FileName = "mimetype",
-                        Content = Encoding.ASCII.GetBytes("application/vnd.oasis.opendocument.spreadsheet")
-                    },
-                    new InMemoryFile()
-                    {
                         FileName = "styles.xml",
                         Content = await XmlService.ConvertToXmlAsync(style)
                     }
                 };
 
-                if (workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0))
+                if (hasSettings)
                 {
                     files.Add(new InMemoryFile()
                     {
@@ -194,6 +201,23 @@ namespace OslSpreadsheet.Services
                 }
             }
 
+            foreach (var dbRange in doc.Descendants(tableNs + "database-range"))
+            {
+                var displayButtons = dbRange.Attribute(tableNs + "display-filter-buttons")?.Value;
+                var targetAddr = dbRange.Attribute(tableNs + "target-range-address")?.Value;
+                if (displayButtons != "true" || targetAddr == null) continue;
+
+                var parts = targetAddr.Split(':');
+                if (parts.Length != 2) continue;
+
+                var (sheetName1, startRow, startCol) = ParseOdsCellAddress(parts[0]);
+                var (_, endRow, endCol) = ParseOdsCellAddress(parts[1]);
+
+                var sheet = workbook.Sheets.FirstOrDefault(s => s.SheetName == sheetName1);
+                if (sheet != null)
+                    sheet.AutoFilterRange = (startRow, startCol, endRow, endCol);
+            }
+
             return workbook;
         }
 
@@ -239,11 +263,11 @@ namespace OslSpreadsheet.Services
                                 Family = "table-column",
                                 tableColumnProperties = new() { ColumnWidth = $"{CharsToOdsCm(width)}cm" }
                             });
-                            table.tableColumns.Add(new ODContent.Table.TableColumn() { StyleName = colStyleName, NumberColumnsRepeated = "" });
+                            table.tableColumns.Add(new ODContent.Table.TableColumn() { StyleName = colStyleName, NumberColumnsRepeated = null });
                         }
                         else
                         {
-                            table.tableColumns.Add(new ODContent.Table.TableColumn() { NumberColumnsRepeated = "" });
+                            table.tableColumns.Add(new ODContent.Table.TableColumn() { NumberColumnsRepeated = null });
                         }
                     }
 
@@ -343,6 +367,29 @@ namespace OslSpreadsheet.Services
                 }
 
                 file.body.spreadsheet.Tables.Add(table);
+            }
+
+            var dbRanges = new List<ODContent.Body.Spreadsheet.DatabaseRanges.DatabaseRange>();
+            int dbIndex = 0;
+            foreach (var s in workbook.Sheets)
+            {
+                if (s.AutoFilterRange is var (sr, sc, er, ec))
+                {
+                    var quotedName = s.SheetName.Contains(' ') ? $"'{s.SheetName}'" : s.SheetName;
+                    var addr = $"{quotedName}.{OdsColumnLetter(sc)}{sr}:{quotedName}.{OdsColumnLetter(ec)}{er}";
+                    dbRanges.Add(new ODContent.Body.Spreadsheet.DatabaseRanges.DatabaseRange
+                    {
+                        Name = $"__Anonymous_Sheet_DB__{dbIndex++}",
+                        TargetRangeAddress = addr,
+                        DisplayFilterButtons = "true"
+                    });
+                }
+            }
+
+            if (dbRanges.Any())
+            {
+                file.body.spreadsheet.databaseRanges = new ODContent.Body.Spreadsheet.DatabaseRanges();
+                file.body.spreadsheet.databaseRanges.Ranges = dbRanges;
             }
 
             return file;
@@ -463,6 +510,40 @@ namespace OslSpreadsheet.Services
             b == null ? "" : $"{b.Style}:{b.Color}";
 
         private static double CharsToOdsCm(double chars) => Math.Round(chars * (1.69333333333333 / 8.43), 4);
+
+        private static string OdsColumnLetter(int col)
+        {
+            string result = "";
+            while (col > 0)
+            {
+                col--;
+                result = (char)('A' + col % 26) + result;
+                col /= 26;
+            }
+            return result;
+        }
+
+        private static (string sheetName, int row, int col) ParseOdsCellAddress(string address)
+        {
+            var dotIdx = address.LastIndexOf('.');
+            var sheetName = dotIdx >= 0 ? address[..dotIdx] : "";
+            var cellRef = dotIdx >= 0 ? address[(dotIdx + 1)..] : address;
+
+            int i = 0;
+            while (i < cellRef.Length && cellRef[i] == '$') i++;
+            int colStart = i;
+            while (i < cellRef.Length && char.IsLetter(cellRef[i])) i++;
+            var colPart = cellRef[colStart..i];
+
+            while (i < cellRef.Length && cellRef[i] == '$') i++;
+            var rowPart = cellRef[i..];
+
+            int col = 0;
+            foreach (char c in colPart)
+                col = col * 26 + (char.ToUpper(c) - 'A' + 1);
+
+            return (sheetName, int.Parse(rowPart), col);
+        }
 
         private static string FormatOdsBorder(CellBorder b)
         {
