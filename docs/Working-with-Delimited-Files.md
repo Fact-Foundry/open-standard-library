@@ -7,6 +7,7 @@
 | Comma | CSV |
 | Tab | TXT |
 | Pipe | TXT |
+| ASCII (Unit/Record Separator) | TXT |
 
 ## Create Delimited File
 

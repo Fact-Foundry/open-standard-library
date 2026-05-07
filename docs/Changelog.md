@@ -4,10 +4,11 @@ All notable changes to Open Standard Library will be documented in this file.
 
 ---
 
-## Unreleased
+## v1.0.1 — 2026-05-01
 
 ### Added
 - **Auto-filters** — Added `SetAutoFilter()` and `SetAutoFilter(int startRow, int startCol, int endRow, int endCol)` to `oSpreadsheet`. XLSX emits `<autoFilter ref="..."/>`, ODS adds `<table:database-range>` with `display-filter-buttons="true"`. Full round-trip import/generate support for both formats
+- **Tests** — Added auto-filter tests, bringing test count from 102 to 113
 
 ### Fixed
 - **ODS files requiring repair in LibreOffice** — Fixed multiple issues preventing ODS files from opening cleanly: incorrect namespace on `table-column-properties`, invalid empty `number-columns-repeated` attribute, UTF-8 BOM in XML files, `standalone="yes"` in XML declarations, missing `settings.xml` entry in manifest, and mimetype entry not stored uncompressed as first ZIP entry

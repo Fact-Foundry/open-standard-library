@@ -6,4 +6,4 @@ This project is mainly focused on creating spreadsheets using in the Open Docume
 This project also includes support for creating delimited files as well such as CSV, tab delimited, and pipe delimited.
 
 
-Refer to the project's [Wiki](https://github.com/kupokev/open-standard-library/wiki) to learn more. 
+Refer to the project's [documentation](https://github.com/Fact-Foundry/open-standard-library/tree/main/docs) to learn more.
