@@ -128,10 +128,10 @@ namespace OslSpreadsheet.Models.Files.ods
                 [XmlAttribute("data-style-name", Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")] // namespace:style
                 public string DataStyleName { get; set; } = "N0";
 
-                [XmlElement("table-cell-properties", ElementName = "table-cell-properties")]
+                [XmlElement("table-cell-properties", ElementName = "table-cell-properties", Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
                 public TableCellProperties tableCellProperties { get; set; }
 
-                [XmlElement("text-properties", ElementName = "text-properties")]
+                [XmlElement("text-properties", ElementName = "text-properties", Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
                 public TextProperties textProperties { get; set; }
 
                 [XmlType(AnonymousType = true, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")]
@@ -304,7 +304,7 @@ namespace OslSpreadsheet.Models.Files.ods
                         };
                     }
 
-                    [XmlElement("header-footer-properties", ElementName = "header-footer-properties")]
+                    [XmlElement("header-footer-properties", ElementName = "header-footer-properties", Namespace = "urn:oasis:names:tc:opendocument:xmlns:style:1.0")]
                     public HeaderFooterProperties headerFooterProperties { get; set; }
                 }
 

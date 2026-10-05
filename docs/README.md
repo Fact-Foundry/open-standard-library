@@ -22,5 +22,6 @@ See [Using the Library](Using-the-Library.md) to learn how to use this library f
 - [Working with Delimited Files](Working-with-Delimited-Files.md)
 - [Working with Open Document Standard](Working-with-Open-Document-Standard.md)
 - [Working with Open Office XML](Working-with-Open-Office-XML.md)
+- [Validating Files](Validating-Files.md)
 - [Changelog](Changelog.md)
 - [Future Enhancements](Future%20Enhancements.md)
