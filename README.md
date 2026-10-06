@@ -84,7 +84,7 @@ if (!result.IsValid)
 }
 ```
 
-See [Validating Files](docs/Validating-Files.md) for details.
+See [Validating Files](https://github.com/kupokev/open-standard-library/blob/main/docs/Validating-Files.md) for details.
 
 ### Stream CSV rows
 
