@@ -364,7 +364,7 @@ namespace OslSpreadsheet.Services
                     // Trailing empty rows filler
                     table.Rows.Add(new ODContent.Table.TableRow()
                     {
-                        NumberRowsRepeated = (1048577 - rowCount).ToString(),
+                        NumberRowsRepeated = (1048576 - rowCount).ToString(),
                         Cells = new List<ODContent.Table.TableRow.TableCell>()
                         {
                             new ODContent.Table.TableRow.TableCell()
@@ -379,7 +379,7 @@ namespace OslSpreadsheet.Services
                     // Empty sheet — filler row
                     table.Rows.Add(new ODContent.Table.TableRow()
                     {
-                        NumberRowsRepeated = "1048577",
+                        NumberRowsRepeated = "1048576",
                         Cells = new List<ODContent.Table.TableRow.TableCell>()
                         {
                             new ODContent.Table.TableRow.TableCell()

@@ -294,7 +294,7 @@ namespace OslSpreadsheet.Models.Files.ods
             }
 
             [XmlAttribute("name", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
-            public string Name { get; set; }
+            public string Name { get; set; } = "";
 
             [XmlAttribute("style-name", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
             public string StyleName { get; set; } = "ta1";

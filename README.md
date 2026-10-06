@@ -25,6 +25,7 @@ A .NET library for reading and creating spreadsheet files in ODS, XLSX, and deli
 - **File encoding options** — UTF-8 (default), ASCII, Unicode (UTF-16), and UTF-32 for delimited files
 - **Epoch conversion** — `FromEpochSeconds()`, `FromEpochMilliseconds()`, `ToEpochSeconds()`, `ToEpochMilliseconds()` extension methods on cells
 - **Formulas** — set formula expressions on cells
+- **File validation** — `SpreadsheetValidator` checks that XLSX, ODS, and delimited files are well-formed without importing them, returning structured errors and warnings (sheet, cell, row, rule code, message). Useful for vetting files produced by LLMs or other tools before they reach users
 - **Dependency injection** — implements `ISpreadsheet` with `IDisposable`/`IAsyncDisposable`
 
 ## Installation
@@ -68,6 +69,22 @@ if (sheet.HasHeaderRow)
         Console.WriteLine(cell.Value);
 }
 ```
+
+### Validate a file
+
+```csharp
+using OslSpreadsheet.Validation;
+
+var result = SpreadsheetValidator.Validate(File.ReadAllBytes("report.xlsx"), "report.xlsx");
+
+if (!result.IsValid)
+{
+    foreach (var issue in result.Errors)
+        Console.WriteLine($"{issue.Code} {issue.Sheet}!{issue.Cell}: {issue.Message}");
+}
+```
+
+See [Validating Files](docs/Validating-Files.md) for details.
 
 ### Stream CSV rows
 

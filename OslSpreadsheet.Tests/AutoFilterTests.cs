@@ -6,6 +6,9 @@ namespace OslSpreadsheet.Tests;
 
 public class AutoFilterTests
 {
+    /// <summary>
+    /// Verifies AutoFilterRange defaults to null on a new sheet.
+    /// </summary>
     [Fact]
     public void AutoFilterRange_DefaultsToNull()
     {
@@ -13,6 +16,9 @@ public class AutoFilterTests
         Assert.Null(sheet.AutoFilterRange);
     }
 
+    /// <summary>
+    /// Verifies SetAutoFilter with no arguments uses the full data range.
+    /// </summary>
     [Fact]
     public void SetAutoFilter_NoArgs_UsesFullRange()
     {
@@ -27,9 +33,12 @@ public class AutoFilterTests
         sheet.SetAutoFilter();
 
         Assert.NotNull(sheet.AutoFilterRange);
-        Assert.Equal((1, 1, 3, 2), sheet.AutoFilterRange.Value);
+        Assert.Equal((1, 1, 3, 2), sheet.AutoFilterRange!.Value);
     }
 
+    /// <summary>
+    /// Verifies SetAutoFilter with explicit range stores the specified range.
+    /// </summary>
     [Fact]
     public void SetAutoFilter_ExplicitRange()
     {
@@ -38,9 +47,12 @@ public class AutoFilterTests
 
         sheet.SetAutoFilter(1, 1, 10, 4);
 
-        Assert.Equal((1, 1, 10, 4), sheet.AutoFilterRange.Value);
+        Assert.Equal((1, 1, 10, 4), sheet.AutoFilterRange!.Value);
     }
 
+    /// <summary>
+    /// Verifies SetAutoFilter on an empty sheet is a no-op.
+    /// </summary>
     [Fact]
     public void SetAutoFilter_EmptySheet_DoesNothing()
     {
@@ -52,6 +64,9 @@ public class AutoFilterTests
 
     // --- XLSX ---
 
+    /// <summary>
+    /// Verifies XLSX auto-filter round-trips cell values and filter range.
+    /// </summary>
     [Fact]
     public async Task Xlsx_AutoFilter_ProducesValidFile()
     {
@@ -72,9 +87,12 @@ public class AutoFilterTests
 
         Assert.Equal("Name", workbook.Sheets[0].GetRow(1).First(c => c.Column == 1).Value);
         Assert.NotNull(workbook.Sheets[0].AutoFilterRange);
-        Assert.Equal((1, 1, 3, 2), workbook.Sheets[0].AutoFilterRange.Value);
+        Assert.Equal((1, 1, 3, 2), workbook.Sheets[0].AutoFilterRange!.Value);
     }
 
+    /// <summary>
+    /// Verifies XLSX auto-filter with an explicit range round-trips correctly.
+    /// </summary>
     [Fact]
     public async Task Xlsx_AutoFilter_ExplicitRange_RoundTrips()
     {
@@ -93,9 +111,12 @@ public class AutoFilterTests
         using var importer = new Spreadsheet();
         var workbook = await importer.ImportXlsxFileAsync(bytes);
 
-        Assert.Equal((1, 1, 5, 3), workbook.Sheets[0].AutoFilterRange.Value);
+        Assert.Equal((1, 1, 5, 3), workbook.Sheets[0].AutoFilterRange!.Value);
     }
 
+    /// <summary>
+    /// Verifies XLSX without auto-filter produces no autoFilter element on import.
+    /// </summary>
     [Fact]
     public async Task Xlsx_NoAutoFilter_NoAutoFilterElement()
     {
@@ -111,6 +132,9 @@ public class AutoFilterTests
         Assert.Null(workbook.Sheets[0].AutoFilterRange);
     }
 
+    /// <summary>
+    /// Verifies XLSX auto-filter works alongside styling and freeze panes.
+    /// </summary>
     [Fact]
     public async Task Xlsx_AutoFilterWithStylingAndFreeze_ProducesValidFile()
     {
@@ -138,6 +162,9 @@ public class AutoFilterTests
 
     // --- ODS ---
 
+    /// <summary>
+    /// Verifies ODS auto-filter round-trips cell values and filter range.
+    /// </summary>
     [Fact]
     public async Task Ods_AutoFilter_ProducesValidFile()
     {
@@ -158,9 +185,12 @@ public class AutoFilterTests
 
         Assert.Equal("Name", workbook.Sheets[0].GetRow(1).First(c => c.Column == 1).Value);
         Assert.NotNull(workbook.Sheets[0].AutoFilterRange);
-        Assert.Equal((1, 1, 3, 2), workbook.Sheets[0].AutoFilterRange.Value);
+        Assert.Equal((1, 1, 3, 2), workbook.Sheets[0].AutoFilterRange!.Value);
     }
 
+    /// <summary>
+    /// Verifies ODS auto-filter with an explicit range round-trips correctly.
+    /// </summary>
     [Fact]
     public async Task Ods_AutoFilter_ExplicitRange_RoundTrips()
     {
@@ -178,9 +208,12 @@ public class AutoFilterTests
         using var importer = new Spreadsheet();
         var workbook = await importer.ImportOdsFileAsync(bytes);
 
-        Assert.Equal((1, 1, 4, 2), workbook.Sheets[0].AutoFilterRange.Value);
+        Assert.Equal((1, 1, 4, 2), workbook.Sheets[0].AutoFilterRange!.Value);
     }
 
+    /// <summary>
+    /// Verifies ODS without auto-filter produces no database range on import.
+    /// </summary>
     [Fact]
     public async Task Ods_NoAutoFilter_NoDbRange()
     {

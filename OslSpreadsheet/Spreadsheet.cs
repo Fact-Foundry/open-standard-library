@@ -4,8 +4,14 @@ using System.Text;
 
 namespace OoxSpreadsheet
 {
+    /// <summary>
+    /// Interface for generating and importing spreadsheet files in multiple formats.
+    /// </summary>
     public interface ISpreadsheet : IDisposable, IAsyncDisposable
     {
+        /// <summary>
+        /// The workbook containing all sheets and data.
+        /// </summary>
         oWorkbook Workbook { get; }
 
         /// <summary>
@@ -13,29 +19,46 @@ namespace OoxSpreadsheet
         /// </summary>
         string[]? CsvHeaders { get; }
 
+        /// <summary>
+        /// Generates a CSV file from the workbook.
+        /// </summary>
         Task<byte[]> GenerateCsvFileAsync();
 
+        /// <summary>
+        /// Generates an ODS (OpenDocument Spreadsheet) file from the workbook.
+        /// </summary>
         Task<byte[]> GenerateOdsFileAsync();
 
+        /// <summary>
+        /// Generates an XLSX (Office Open XML) file from the workbook.
+        /// </summary>
         Task<byte[]> GenerateXlsxFileAsync();
 
+        /// <summary>
+        /// Imports a CSV file into the workbook.
+        /// </summary>
         Task<oWorkbook> ImportCsvFileAsync(byte[] file);
 
+        /// <summary>
+        /// Imports an ODS file into the workbook.
+        /// </summary>
         Task<oWorkbook> ImportOdsFileAsync(byte[] file);
 
+        /// <summary>
+        /// Imports an XLSX file into the workbook.
+        /// </summary>
         Task<oWorkbook> ImportXlsxFileAsync(byte[] file);
 
         /// <summary>
         /// Reads CSV rows one at a time from a stream without loading the entire file into memory.
         /// When hasHeaderRow is true, the first row is consumed as headers (available via CsvHeaders) and not yielded.
         /// </summary>
-        /// <param name="stream"></param>
-        /// <param name="hasHeaderRow"></param>
-        /// <param name="rowLimit"></param>
-        /// <returns></returns>
         IAsyncEnumerable<string[]> ReadCsvRowsAsync(Stream stream, bool hasHeaderRow = false, int? rowLimit = null);
     }
 
+    /// <summary>
+    /// Spreadsheet implementation for generating and importing ODS, XLSX, and delimited files.
+    /// </summary>
     public class Spreadsheet : ISpreadsheet
     {
         private oWorkbook _workbook;
@@ -45,12 +68,13 @@ namespace OoxSpreadsheet
             _workbook = new oWorkbook();
         }
 
+        /// <inheritdoc />
         public oWorkbook Workbook  { get => _workbook; }
 
         /// <inheritdoc />
         public string[]? CsvHeaders { get; private set; }
 
-
+        /// <inheritdoc />
         public async Task<byte[]> GenerateCsvFileAsync()
         {
             IFileService _fileService = new DelimitedFileService();
@@ -58,6 +82,7 @@ namespace OoxSpreadsheet
             return await _fileService.GenerateFileAsync(Workbook);
         }
 
+        /// <inheritdoc />
         public async Task<byte[]> GenerateOdsFileAsync()
         {
             IFileService _fileService = new OdsFileService();
@@ -65,6 +90,7 @@ namespace OoxSpreadsheet
             return await _fileService.GenerateFileAsync(Workbook);
         }
 
+        /// <inheritdoc />
         public async Task<byte[]> GenerateXlsxFileAsync()
         {
             IFileService _fileService = new XlsxFileService();
@@ -72,6 +98,7 @@ namespace OoxSpreadsheet
             return await _fileService.GenerateFileAsync(Workbook);
         }
 
+        /// <inheritdoc />
         public async Task<oWorkbook> ImportCsvFileAsync(byte[] file)
         {
             IFileService _fileService = new DelimitedFileService();
@@ -81,6 +108,7 @@ namespace OoxSpreadsheet
             return _workbook;
         }
 
+        /// <inheritdoc />
         public async Task<oWorkbook> ImportOdsFileAsync(byte[] file)
         {
             IFileService _fileService = new OdsFileService();
@@ -90,6 +118,7 @@ namespace OoxSpreadsheet
             return _workbook;
         }
 
+        /// <inheritdoc />
         public async Task<oWorkbook> ImportXlsxFileAsync(byte[] file)
         {
             IFileService _fileService = new XlsxFileService();
@@ -109,9 +138,9 @@ namespace OoxSpreadsheet
             int rowCount = 0;
             bool isFirstRow = true;
 
-            while (!reader.EndOfStream)
+            string? line;
+            while ((line = await reader.ReadLineAsync()) != null)
             {
-                var line = await reader.ReadLineAsync();
                 if (string.IsNullOrEmpty(line)) continue;
 
                 var values = ParseCsvLine(line);

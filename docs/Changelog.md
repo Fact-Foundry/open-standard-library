@@ -4,6 +4,27 @@ All notable changes to Open Standard Library will be documented in this file.
 
 ---
 
+## Unreleased
+
+### Added
+- **File validation** — Added `SpreadsheetValidator` (namespace `OslSpreadsheet.Validation`) to check that XLSX, ODS, and delimited files are well-formed without importing them. Returns a `ValidationResult` with `IsValid` and structured `ValidationIssue`s (severity, rule code, message, sheet, cell, row, part, location), plus a plain-text report via `ToString()` suitable for sending back to an LLM. Errors (files that applications refuse, repair, or lose data from) are separated from warnings (spec deviations that open cleanly). Detects files in the wrong format, such as CSV text saved as `.xlsx`, base64-encoded ZIP data, or ODS saved as XLSX. Includes a zip-bomb size guard and an issue limit. See [Validating Files](Validating-Files.md)
+- **Tests** — Added validation tests
+
+### Fixed
+- **ODS default styles in the wrong namespace** — `styles.xml` wrote `table-cell-properties`, `text-properties`, and `header-footer-properties` in the `table:` namespace instead of `style:`, so applications ignored those default formatting properties
+- **ODS row count off by one** — Generated sheets declared 1,048,577 rows (including the trailing filler row) instead of the 1,048,576-row maximum
+
+---
+
+## v1.0.3 — 2026-05-19
+
+### Changed
+- **Resolved all compiler warnings** — Fixed nullable value type warnings in `AutoFilterTests`, non-nullable property warnings in `InMemoryFile` and `ODContent`, null reference warnings in `XmlService`, unused variable in `XmlService`, and async `EndOfStream` usage in `Spreadsheet` (CA2024)
+- **XML documentation** — Added XML doc comments to `ISpreadsheet`, `Spreadsheet`, `InMemoryFile`, `XmlService`, and all `AutoFilterTests` methods
+- **CI/CD** — Opted into Node.js 24 for GitHub Actions to resolve Node.js 20 deprecation warnings
+
+---
+
 ## v1.0.2 — 2026-05-19
 
 ### Added

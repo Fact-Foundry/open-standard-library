@@ -1,19 +1,23 @@
-﻿using System.Text;
+using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
 
 namespace OslSpreadsheet.Services
 {
+    /// <summary>
+    /// Handles XML serialization and deserialization for ODS file components.
+    /// </summary>
     internal static class XmlService
     {
+        /// <summary>
+        /// Serializes an object to UTF-8 encoded XML bytes.
+        /// </summary>
         internal static async Task<byte[]> ConvertToXmlAsync(object obj)
         {
             try
             {
-                // Generate serializer
                 XmlSerializer serializer = new(obj.GetType());
 
-                // Settings
                 var utf8NoBom = new UTF8Encoding(false);
                 var settings = new XmlWriterSettings
                 {
@@ -26,7 +30,6 @@ namespace OslSpreadsheet.Services
                 var ns = new XmlSerializerNamespaces();
                 ns.Add(string.Empty, string.Empty);
 
-                // Generate memory stream
                 await using MemoryStream memoryStream = new();
                 using var streamWriter = XmlWriter.Create(memoryStream, settings);
 
@@ -37,47 +40,23 @@ namespace OslSpreadsheet.Services
                 var result = Encoding.UTF8.GetString(file);
 
                 return Encoding.UTF8.GetBytes(result.Replace("utf-8", "UTF-8").Replace("\" />", "\"/>"));
-
-                //return file;
             }
-            catch (Exception ex)
+            catch
             {
-                return new byte[0];
+                return [];
             }
         }
 
-        //async Task TestConvertXmlToObject()
-        //{
-        //    var xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-        //        + "<document-meta xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:meta=\"urn:oasis:names:tc:opendocument:xmlns:meta:1.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" office:version=\"1.3\" >"
-        //        + "<meta>"
-        //        + "<generator>Open Standard Library v1.0.0</generator>"
-        //        + "<initial-creator>Open Standard Library v1.0.0</initial-creator>"
-        //        + "<creator>Open Standard Library v1.0.0</creator>"
-        //        + "<creation-date>2022-01-08T23:01:46Z </creation-date>"
-        //        + "<date>2022-01-08T23:01:46Z</date>"
-        //        + "</meta>"
-        //        + "</document-meta>";
-
-        //    var obj = await XmlService.ConvertToObject<ODMeta>(xml);
-        //}
-
         /// <summary>
-        /// Converts XML to a model
+        /// Deserializes an XML string into the specified type.
         /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="xml"></param>
-        /// <returns></returns>
-        internal static async Task<object> ConvertToObject<T>(string xml)
+        internal static async Task<T?> ConvertToObject<T>(string xml) where T : class
         {
-            T retval = default;
-
-            using (var reader = new StringReader(xml))
+            return await Task.Run(() =>
             {
-                retval = (T)new XmlSerializer(typeof(T)).Deserialize(reader);
-            }
-
-            return retval;
+                using var reader = new StringReader(xml);
+                return new XmlSerializer(typeof(T)).Deserialize(reader) as T;
+            });
         }
     }
 }
