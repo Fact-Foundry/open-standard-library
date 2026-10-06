@@ -49,7 +49,9 @@ The code above generates the following output:
 
 ## Import Delimited File
 
-To import a CSV file into a workbook, the CSV must be in a valid format. The following text is an example of properly formatted text:
+Import currently supports comma-delimited files in which **every value is wrapped in double quotes**, as produced by `GenerateCsvFileAsync()`. Unquoted CSV, tab-, pipe-, and ASCII-delimited files are not imported correctly yet, and `ImportCsvFileAsync()` does not use the workbook's `ColumnDelimeter` setting. The same applies to `ReadCsvRowsAsync()`.
+
+The following text is an example of a file that can be imported:
 
 ```
 "Item #","Price"

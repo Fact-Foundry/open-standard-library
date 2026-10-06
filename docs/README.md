@@ -6,9 +6,9 @@ Open Standard Library is a .NET library for reading and creating open standard s
 
 | # | File Type | Generator | Importer |
 |---|-----------|-----------|----------|
-| 1 | Comma Delimited (csv) | Done | Done |
-| 2 | Tab Delimited (txt) | Done | Done |
-| 3 | Pipe Delimited (txt) | Done | Done |
+| 1 | Comma Delimited (csv) | Done | Done (values must be double-quoted) |
+| 2 | Tab Delimited (txt) | Done | Not yet |
+| 3 | Pipe Delimited (txt) | Done | Not yet |
 | 4 | Open Document Standard (ods) | Done | Done |
 | 5 | Open Office XML (xlsx) | Done | Done |
 

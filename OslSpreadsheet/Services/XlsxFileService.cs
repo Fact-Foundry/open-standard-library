@@ -130,6 +130,9 @@ namespace OslSpreadsheet.Services
                         sheet.FreezeColumns = freezeCols;
                 }
 
+                // Shared formulas store the text once (on the master cell) and are reused by other cells with references shifted
+                var sharedFormulas = new Dictionary<string, (string formula, int row, int col)>();
+
                 foreach (var rowEl in sheetDoc.Descendants(mainNs + "row"))
                 {
                     foreach (var cellEl in rowEl.Elements(mainNs + "c"))
@@ -156,6 +159,9 @@ namespace OslSpreadsheet.Services
                             case "str": // formula string result
                                 value = rawValue;
                                 break;
+                            case "e": // error value such as #N/A
+                                value = rawValue;
+                                break;
                             case "b": // boolean
                                 value = rawValue == "1" ? "true" : "false";
                                 valueType = CellValueType.Boolean;
@@ -180,6 +186,7 @@ namespace OslSpreadsheet.Services
 
                         var oCell = sheet.AddCell(rowNum, colNum, value);
                         oCell.ValueType = valueType;
+                        oCell.Formula = ReadFormula(cellEl.Element(mainNs + "f"), rowNum, colNum, sharedFormulas);
                     }
                 }
 
@@ -200,6 +207,25 @@ namespace OslSpreadsheet.Services
             }
 
             return workbook;
+        }
+
+        private static string? ReadFormula(XElement? f, int row, int col, Dictionary<string, (string formula, int row, int col)> sharedFormulas)
+        {
+            if (f == null)
+                return null;
+
+            var text = f.Value;
+            var sharedIndex = f.Attribute("t")?.Value == "shared" ? f.Attribute("si")?.Value : null;
+
+            if (sharedIndex != null)
+            {
+                if (!string.IsNullOrEmpty(text))
+                    sharedFormulas[sharedIndex] = (text, row, col);
+                else if (sharedFormulas.TryGetValue(sharedIndex, out var master))
+                    text = FormulaTranslator.Shift(master.formula, row - master.row, col - master.col);
+            }
+
+            return string.IsNullOrEmpty(text) ? null : FormulaTranslator.FromXlsx(text);
         }
 
         private static (int row, int col) ParseCellRef(string cellRef)
@@ -246,6 +272,9 @@ namespace OslSpreadsheet.Services
             foreach (var sheet in workbook.Sheets)
                 sb.Append($"<sheet name=\"{SecurityElement.Escape(sheet.SheetName)}\" sheetId=\"{sheet.Index}\" r:id=\"rId{sheet.Index}\"/>");
             sb.Append("</sheets>");
+            // The library doesn't calculate formulas, so ask the application to compute them when the file opens
+            if (workbook.Sheets.Any(s => s.Cells.Any(c => FormulaTranslator.Normalize(c.Formula) != null)))
+                sb.Append("<calcPr fullCalcOnLoad=\"1\"/>");
             sb.Append("</workbook>");
             return Utf8(sb.ToString());
         }
@@ -524,7 +553,9 @@ namespace OslSpreadsheet.Services
                             styleAttr = $" s=\"{si}\"";
                     }
 
-                    if (cell.ValueType == CellValueType.DateTime && System.DateTime.TryParse(cell.Value, out var dt))
+                    if (FormulaTranslator.Normalize(cell.Formula) is string formula)
+                        sb.Append(BuildFormulaCell(cell, cellRef, styleAttr, formula));
+                    else if (cell.ValueType == CellValueType.DateTime && System.DateTime.TryParse(cell.Value, out var dt))
                         sb.Append($"<c r=\"{cellRef}\"{styleAttr}><v>{dt.ToOADate()}</v></c>");
                     else if (cell.ValueType == CellValueType.Float || cell.ValueType == CellValueType.Int64)
                         sb.Append($"<c r=\"{cellRef}\"{styleAttr}><v>{SecurityElement.Escape(cell.Value)}</v></c>");
@@ -543,6 +574,28 @@ namespace OslSpreadsheet.Services
 
             sb.Append("</worksheet>");
             return Utf8(sb.ToString());
+        }
+
+        /// <summary>
+        /// Builds a formula cell. The cell's Value, if set, is written as the cached result; otherwise no result is stored.
+        /// </summary>
+        private static string BuildFormulaCell(oCell cell, string cellRef, string styleAttr, string formula)
+        {
+            var f = $"<f>{SecurityElement.Escape(FormulaTranslator.ToXlsx(formula))}</f>";
+
+            if (string.IsNullOrEmpty(cell.Value))
+                return $"<c r=\"{cellRef}\"{styleAttr}>{f}</c>";
+
+            return cell.ValueType switch
+            {
+                CellValueType.Float or CellValueType.Int64 when double.TryParse(cell.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _)
+                    => $"<c r=\"{cellRef}\"{styleAttr}>{f}<v>{SecurityElement.Escape(cell.Value)}</v></c>",
+                CellValueType.DateTime when System.DateTime.TryParse(cell.Value, out var dt)
+                    => $"<c r=\"{cellRef}\"{styleAttr}>{f}<v>{dt.ToOADate()}</v></c>",
+                CellValueType.Boolean
+                    => $"<c r=\"{cellRef}\"{styleAttr} t=\"b\">{f}<v>{(cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "1" : "0")}</v></c>",
+                _ => $"<c r=\"{cellRef}\"{styleAttr} t=\"str\">{f}<v>{SecurityElement.Escape(cell.Value)}</v></c>"
+            };
         }
 
         private static string ColumnLetter(int col)

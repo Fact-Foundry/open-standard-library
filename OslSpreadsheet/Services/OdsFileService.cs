@@ -111,7 +111,7 @@ namespace OslSpreadsheet.Services
                 {
                     int rowsRepeated = int.TryParse(tableRow.Attribute(tableNs + "number-rows-repeated")?.Value, out int rr) ? rr : 1;
 
-                    var rowData = new List<(int col, string value, CellValueType type)>();
+                    var rowData = new List<(int col, string value, CellValueType type, string? formula)>();
                     int colIndex = 0;
 
                     foreach (var cell in tableRow.Elements(tableNs + "table-cell"))
@@ -122,7 +122,9 @@ namespace OslSpreadsheet.Services
                         var textValue  = cell.Element(textNs + "p")?.Value;
                         var numericValue = cell.Attribute(officeNs + "value")?.Value;
                         var booleanValue = cell.Attribute(officeNs + "boolean-value")?.Value;
-                        bool hasContent = valueType != null || textValue != null;
+                        var formulaValue = cell.Attribute(tableNs + "formula")?.Value;
+                        var formula = string.IsNullOrEmpty(formulaValue) ? null : FormulaTranslator.FromOpenFormula(formulaValue);
+                        bool hasContent = valueType != null || textValue != null || formula != null;
 
                         if (hasContent)
                         {
@@ -154,7 +156,7 @@ namespace OslSpreadsheet.Services
                             for (int i = 0; i < colsRepeated; i++)
                             {
                                 colIndex++;
-                                rowData.Add((colIndex, cellValue, cellType));
+                                rowData.Add((colIndex, cellValue, cellType, formula));
                             }
                         }
                         else
@@ -172,10 +174,11 @@ namespace OslSpreadsheet.Services
                     for (int r = 0; r < rowsRepeated; r++)
                     {
                         rowIndex++;
-                        foreach (var (col, value, type) in rowData)
+                        foreach (var (col, value, type, formula) in rowData)
                         {
                             var oCell = sheet.AddCell(rowIndex, col, value);
                             oCell.ValueType = type;
+                            oCell.Formula = formula;
                         }
                     }
                 }
@@ -342,6 +345,21 @@ namespace OslSpreadsheet.Services
                                 else
                                 {
                                     tableCell.ValueType = "string";
+                                }
+
+                                if (FormulaTranslator.Normalize(cell.Formula) is string formula)
+                                {
+                                    tableCell.Formula = FormulaTranslator.ToOpenFormula(formula);
+
+                                    // Without a cached result, leave the cell untyped so the application calculates it on load
+                                    if (string.IsNullOrEmpty(cell.Value))
+                                    {
+                                        tableCell.ValueType = null;
+                                        tableCell.NumericValue = null;
+                                        tableCell.BooleanValue = null;
+                                        tableCell.DateValue = null;
+                                        tableCell.TextValue = null;
+                                    }
                                 }
 
                                 tableRow.Cells.Add(tableCell);

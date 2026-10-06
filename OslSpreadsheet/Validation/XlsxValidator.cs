@@ -77,6 +77,7 @@ namespace OslSpreadsheet.Validation
         private readonly Dictionary<string, string> _defaultContentTypes = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _overrideContentTypes = new(StringComparer.OrdinalIgnoreCase);
         private XNamespace _ns = TransitionalNs;
+        private readonly HashSet<string> _sheetNames = new(StringComparer.OrdinalIgnoreCase);
 
         private XlsxValidator(ZipPackage package, IssueCollector issues)
         {
@@ -439,6 +440,10 @@ namespace OslSpreadsheet.Validation
                 _issues.Error($"{Prefix}_NO_SHEETS", "The <sheets> element is empty. A workbook must contain at least one <sheet>.", workbookPart, ZipPackage.LineOf(sheetsElements[0]));
                 return;
             }
+
+            foreach (var sheet in sheetElements)
+                if ((string?)sheet.Attribute("name") is string sheetName)
+                    _sheetNames.Add(sheetName);
 
             var workbookRels = GetRelationships(workbookPart);
             if (workbookRels == null)
@@ -805,6 +810,11 @@ namespace OslSpreadsheet.Validation
             if (formula != null && formula.Contains("#REF!", StringComparison.Ordinal))
                 _issues.Error($"{Prefix}_FORMULA_BROKEN_REFERENCE",
                     $"The formula \"{Truncate(formula)}\" contains #REF!, meaning it refers to a cell, range, or sheet that does not exist.", part, location, sheet, cellName, row);
+            if (!string.IsNullOrEmpty(formula))
+                foreach (var missing in Services.FormulaTranslator.ReferencedSheets(formula).Where(n => !_sheetNames.Contains(n)))
+                    _issues.Error($"{Prefix}_FORMULA_UNKNOWN_SHEET",
+                        $"The formula \"{Truncate(formula)}\" refers to sheet \"{missing}\", which does not exist in this workbook. Existing sheets: {string.Join(", ", _sheetNames)}.",
+                        part, location, sheet, cellName, row);
 
             if (type != "inlineStr" && cell.Element(_ns + "is") != null)
                 _issues.Error($"{Prefix}_CELL_INLINE_STRING_TYPE",

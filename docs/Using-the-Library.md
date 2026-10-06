@@ -2,6 +2,12 @@
 
 This library uses a Workbook model created in the Spreadsheet service that is implemented through the interface `ISpreadsheet`.
 
+You can create it directly with `new Spreadsheet()`, or register it with your dependency injection container yourself (the library does not include a registration extension):
+
+```csharp
+services.AddTransient<ISpreadsheet, Spreadsheet>();
+```
+
 ```csharp
 await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 {
@@ -42,6 +48,12 @@ Sheets support auto filters via `SetAutoFilter()` and `SetAutoFilter(int startRo
 ## Column Width
 
 Column widths can be controlled via `SetColumnWidth(int column, double width)` and `AutoFitColumns(double minWidth, double maxWidth)` on `oSpreadsheet`.
+
+## Formulas
+
+Set `Formula` on a cell using Excel A1 syntax, such as `=SUM(A1:A10)` or `='My Data'!B2*2`. Formulas are written to and read from XLSX and ODS files; for ODS they are translated to and from OpenFormula syntax automatically. Delimited files store values only.
+
+The library does not calculate formulas. Excel and LibreOffice compute them when the file opens, but tools that only read stored values see an empty result unless you set the cell's `Value` (and `ValueType`) to the known result, which is then stored as the cached value.
 
 ## File Type Guides
 

@@ -4,6 +4,19 @@ All notable changes to Open Standard Library will be documented in this file.
 
 ---
 
+## Unreleased
+
+### Added
+- **Formulas in XLSX and ODS** — `oCell.Formula` (Excel A1 syntax, e.g. `=SUM('My Data'!A1:A3)`) is now written when generating and read when importing. Previously the property was stored but never written to files. ODS formulas are translated to and from OpenFormula syntax (`of:=SUM([$'My Data'.A1:.A3])`). XLSX shared formulas are expanded on import. A cell's `Value` on a formula cell is stored as the cached result; without one, XLSX workbooks are flagged to recalculate on load and ODS cells are left untyped so the application calculates them. The library does not calculate formulas itself
+- **Validator: formulas referencing missing sheets** — Added `XLSX_FORMULA_UNKNOWN_SHEET` and `ODS_FORMULA_UNKNOWN_SHEET` errors for formulas that refer to a sheet not in the workbook
+- **Tests** — Added 21 formula tests, bringing test count from 184 to 205
+
+### Fixed
+- **XLSX import of error cells** — Cells with cached error values (`t="e"`, e.g. `#N/A`) were imported as Float; they are now imported as String
+- **Documentation accuracy** — Delimited import is documented as supporting only comma-delimited files with every value double-quoted (tab, pipe, ASCII, and unquoted CSV were previously listed as supported). ODS and XLSX docs no longer list cell styles and column widths as imported. Added DI registration guidance and formula documentation
+
+---
+
 ## v1.0.3 — 2026-10-06
 
 ### Added
