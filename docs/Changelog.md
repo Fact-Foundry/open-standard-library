@@ -9,11 +9,15 @@ All notable changes to Open Standard Library will be documented in this file.
 ### Added
 - **Formulas in XLSX and ODS** — `oCell.Formula` (Excel A1 syntax, e.g. `=SUM('My Data'!A1:A3)`) is now written when generating and read when importing. Previously the property was stored but never written to files. ODS formulas are translated to and from OpenFormula syntax (`of:=SUM([$'My Data'.A1:.A3])`). XLSX shared formulas are expanded on import. A cell's `Value` on a formula cell is stored as the cached result; without one, XLSX workbooks are flagged to recalculate on load and ODS cells are left untyped so the application calculates them. The library does not calculate formulas itself
 - **Validator: formulas referencing missing sheets** — Added `XLSX_FORMULA_UNKNOWN_SHEET` and `ODS_FORMULA_UNKNOWN_SHEET` errors for formulas that refer to a sheet not in the workbook
-- **Tests** — Added 21 formula tests, bringing test count from 184 to 205
+- **Delimited import for every delimiter** — `ImportCsvFileAsync()` and `ReadCsvRowsAsync()` now use the workbook's `ColumnDelimeter`, so tab-, pipe-, and ASCII-delimited files can be imported
+- **Tests** — Added 21 formula tests and 16 delimited import tests, bringing test count from 184 to 221
 
 ### Fixed
+- **CSV import of unquoted values** — Import only handled files where every value was wrapped in double quotes; unquoted files such as `a,b` were silently imported as garbage. Import now follows RFC 4180, handling quoted and unquoted values, delimiters and line breaks inside quoted values, and CRLF line endings. `ReadCsvRowsAsync()` now also reads quoted values that span lines
+- **Delimited import ignored the configured encoding** — `ImportCsvFileAsync()` always decoded as UTF-8 regardless of `FileEncoding`; it now uses the workbook's setting, and the imported workbook keeps its delimiter and encoding
+- **Tab and pipe values containing the delimiter** — Generated tab- and pipe-delimited files wrote such values unquoted, splitting them into extra columns. Values containing the delimiter or a line break, or starting with a quote, are now quoted
 - **XLSX import of error cells** — Cells with cached error values (`t="e"`, e.g. `#N/A`) were imported as Float; they are now imported as String
-- **Documentation accuracy** — Delimited import is documented as supporting only comma-delimited files with every value double-quoted (tab, pipe, ASCII, and unquoted CSV were previously listed as supported). ODS and XLSX docs no longer list cell styles and column widths as imported. Added DI registration guidance and formula documentation
+- **Documentation accuracy** — ODS and XLSX docs no longer list cell styles and column widths as imported, and list all supported value types. Added DI registration guidance and formula documentation
 
 ---
 

@@ -36,9 +36,9 @@ await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 }
 ```
 
-When converting to a CSV file, the values will be wrapped in double-quotes and separated by commas. Additionally, double-quotes inside a column's text will be properly escaped.
+When converting to a CSV file, every value is wrapped in double quotes and separated by commas, and double quotes inside a value are escaped by doubling them (RFC 4180).
 
-Other delimited types do not escape double-quotes and do not wrap values in double-quotes.
+Tab- and pipe-delimited files write values as-is, except that a value containing the delimiter or a line break, or starting with a double quote, is wrapped in double quotes (with inner quotes doubled) so it reads back correctly. ASCII-delimited files never quote values.
 
 The code above generates the following output:
 
@@ -49,27 +49,33 @@ The code above generates the following output:
 
 ## Import Delimited File
 
-Import currently supports comma-delimited files in which **every value is wrapped in double quotes**, as produced by `GenerateCsvFileAsync()`. Unquoted CSV, tab-, pipe-, and ASCII-delimited files are not imported correctly yet, and `ImportCsvFileAsync()` does not use the workbook's `ColumnDelimeter` setting. The same applies to `ReadCsvRowsAsync()`.
-
-The following text is an example of a file that can be imported:
-
-```
-"Item #","Price"
-"5"" Fitting","10.20"
-```
-
-To import a CSV file into a workbook, use the following code:
+Import uses the workbook's `ColumnDelimeter` and `FileEncoding`, so set them before importing anything other than a UTF-8 comma-delimited file:
 
 ```csharp
 await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 {
-    var file = File.ReadAllBytes(@"C:\Temp\New File.csv");
+    spreadsheet.Workbook.ColumnDelimeter = ColumnDelimeter.Tab; // Comma by default
+
+    var file = File.ReadAllBytes(@"C:\Temp\New File.txt");
 
     var workbook = await spreadsheet.ImportCsvFileAsync(file);
 
     // Code to work with the workbook
 }
 ```
+
+Comma-, tab-, and pipe-delimited files may mix quoted and unquoted values. Quoted values can contain the delimiter, line breaks, and doubled quotes (`""`), following RFC 4180:
+
+```
+Item #,Price,Notes
+"5"" Fitting",10.20,"Fits 1/2"" and
+3/4"" pipe"
+Elbow,4.50,
+```
+
+Import is lenient, like spreadsheet applications: a quote inside an unquoted value is kept as text, and blank lines are skipped. To detect malformed files instead, use [`SpreadsheetValidator.ValidateDelimited()`](Validating-Files.md). All values are imported as strings.
+
+`ReadCsvRowsAsync()` uses the same rules, so it also reads quoted values that span multiple lines.
 
 ---
 

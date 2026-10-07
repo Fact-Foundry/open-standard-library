@@ -5,6 +5,18 @@ namespace OslSpreadsheet.Services
 {
     internal class DelimitedFileService : IFileService
     {
+        private readonly ColumnDelimeter _importDelimiter;
+        private readonly FileEncoding _importEncoding;
+
+        /// <summary>
+        /// Creates the service. The delimiter and encoding apply to import; generation uses the workbook's settings.
+        /// </summary>
+        public DelimitedFileService(ColumnDelimeter importDelimiter = ColumnDelimeter.Comma, FileEncoding importEncoding = FileEncoding.UTF8)
+        {
+            _importDelimiter = importDelimiter;
+            _importEncoding = importEncoding;
+        }
+
         /// <summary>
         /// Converts an oWorkbook object to a delimited file byte array.
         /// </summary>
@@ -15,72 +27,34 @@ namespace OslSpreadsheet.Services
         {
             if (workbook.Sheets.Count == 0) throw new ArgumentException("Workbook requires at least 1 sheet to convert to a delimited file.");
 
-            byte[] output;
-
-            string result = "";
-
-            // Wrap values in double quotes for comma delimited files
-            char? valueWrap = workbook.ColumnDelimeter == ColumnDelimeter.Comma ? '\"' : null;
-
-            // Column Delimiter
-            string colDelimiter =
-                string.Concat(
-                    valueWrap,
-                    GetColumnDelimiter(workbook.ColumnDelimeter),
-                    valueWrap
-                    );
-
-            // Newline Delimiter
-            string nlDelimiter = GetRowDelimiter(workbook.ColumnDelimeter);
-
-            var cols = workbook.Sheets[0].Cells.Max(x => x.Column);
-            var rows = workbook.Sheets[0].Cells.Max(x => x.Row);
+            var delimiter = workbook.ColumnDelimeter;
+            var colDelimiter = DelimitedParser.GetDelimiter(delimiter);
+            var nlDelimiter = GetRowDelimiter(delimiter);
 
             var cells = workbook.Sheets[0].Cells;
+            var cols = cells.Max(x => x.Column);
+            var rows = cells.Max(x => x.Row);
+            var lookup = cells.GroupBy(c => (c.Row, c.Column)).ToDictionary(g => g.Key, g => g.Last().Value);
+
+            var result = new StringBuilder();
 
             // Have to start at 1 instead of 0
             for (int r = 1; r <= rows; r++)
             {
-                var values = new List<string>();
-
                 for (int c = 1; c <= cols; c++)
                 {
-                    string value = cells.FirstOrDefault(x => x.Row == r && x.Column == c)?.Value ?? "";
-                    values.Add(ParseValue(value, valueWrap));
+                    if (c > 1)
+                        result.Append(colDelimiter);
+                    var value = lookup.TryGetValue((r, c), out var v) ? v ?? "" : "";
+                    result.Append(DelimitedParser.FormatValue(value, delimiter));
                 }
-                     
-                // Convert the row into delimited string
-                result += string.Concat(
-                    valueWrap,
-                    string.Join(colDelimiter, values),
-                    valueWrap,
-                    nlDelimiter
-                    );
+                result.Append(nlDelimiter);
             }
 
-            output = GetEncoding(workbook.FileEncoding).GetBytes(result);
-
-            return Task.FromResult(output);
+            return Task.FromResult(GetEncoding(workbook.FileEncoding).GetBytes(result.ToString()));
         }
 
-        private char GetColumnDelimiter(ColumnDelimeter delimeter)
-        {
-            switch(delimeter)
-            {
-                case ColumnDelimeter.ASCII:
-                    //return Convert.ToChar(31).ToString();
-                    return  '\u001F';
-                default:
-                case ColumnDelimeter.Comma:
-                    return ',';
-                case ColumnDelimeter.Pipe:
-                    return '|';
-                case ColumnDelimeter.Tab:
-                    return '\t';
-            }
-        }
-
-        private string GetRowDelimiter(ColumnDelimeter delimeter)
+        private static string GetRowDelimiter(ColumnDelimeter delimeter)
         {
             switch (delimeter)
             {
@@ -95,69 +69,31 @@ namespace OslSpreadsheet.Services
         }
 
         /// <summary>
-        /// Manipulates values of a cell to proper values that can be stored in CSV
+        /// Converts a delimited file byte array to an oWorkbook object, using the delimiter and encoding given to the constructor.
         /// </summary>
-        /// <param name="value"></param>
-        /// <returns></returns>
-        private string ParseValue(string value, char? valueWrap)
-        {
-            if (valueWrap == null || valueWrap != '\"')
-                // Just return the value if valueWrap is empty
-                return value;
-            else
-                // Double quotes in CSV are escaped by adding another double quote in front of it according to RFC-4180
-                return value.Replace("\"", "\"\"");
-        }
-
-        /// <summary>
-        /// Converts a CSV file byte array to an oWorkbook object
-        /// </summary>
-        /// <param name="value"></param>
+        /// <param name="file"></param>
         /// <returns></returns>
         public async Task<oWorkbook> GenerateModel(byte[] file)
         {
-            // Create new workbook
-            oWorkbook workbook = new();
+            oWorkbook workbook = new()
+            {
+                ColumnDelimeter = _importDelimiter,
+                FileEncoding = _importEncoding
+            };
 
-            // Add sheet to workbook
             var sheet1 = await workbook.AddSheetAsync();
 
-            try
+            if (file == null || file.Length == 0)
+                return workbook;
+
+            using var reader = new StreamReader(new MemoryStream(file), GetEncoding(_importEncoding));
+
+            int r = 0;
+            await foreach (var values in DelimitedParser.ParseAsync(reader, _importDelimiter))
             {
-                // Check 
-                if (file == null || file.Length == 0) throw new ArgumentNullException("File is empty");
-
-                // Convert file to string and replace line endings with Environment.NewLine
-                var contents = GetEncoding(workbook.FileEncoding).GetString(file).ReplaceLineEndings(Environment.NewLine);
-
-                // Split the contents into multiple rows
-                var lines = contents.Split(Environment.NewLine).ToList();
-
-                // Remove blank lines
-                lines.Remove("");
-
-                for (int r = 0; r < lines.Count(); r++)
-                {
-                    // Split the line to columns
-                    var cols = lines[r].Replace("\", \"", "\",\"").Replace("\" ,\"", "\",\"").Split("\",\"");
-
-                    // Remove the first double-quote
-                    cols[0] = cols[0].Remove(0, 1);
-
-                    // Remove end quote for the last element
-                    cols[cols.Count() - 1] = cols[cols.Count() - 1].Remove(cols[cols.Count() - 1].Length - 1, 1);
-
-                    // Cycle through the columns and add to list
-                    for (int c = 0; c < cols.Count(); c++)
-                    {
-                        // Unescape doubled quotes per RFC-4180
-                        sheet1.AddCell(r + 1, c + 1, cols[c].Replace("\"\"", "\""));
-                    }
-                }
-            }
-            catch
-            {
-
+                r++;
+                for (int c = 0; c < values.Length; c++)
+                    sheet1.AddCell(r, c + 1, values[c]);
             }
 
             return workbook;

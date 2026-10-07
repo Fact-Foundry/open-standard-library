@@ -35,7 +35,8 @@ namespace OoxSpreadsheet
         Task<byte[]> GenerateXlsxFileAsync();
 
         /// <summary>
-        /// Imports a CSV file into the workbook.
+        /// Imports a delimited file into the workbook, using the current workbook's <see cref="oWorkbook.ColumnDelimeter"/>
+        /// and <see cref="oWorkbook.FileEncoding"/>. Comma, tab, and pipe files may use RFC 4180 quoting.
         /// </summary>
         Task<oWorkbook> ImportCsvFileAsync(byte[] file);
 
@@ -50,7 +51,8 @@ namespace OoxSpreadsheet
         Task<oWorkbook> ImportXlsxFileAsync(byte[] file);
 
         /// <summary>
-        /// Reads CSV rows one at a time from a stream without loading the entire file into memory.
+        /// Reads delimited rows one at a time from a stream without loading the entire file into memory, using the
+        /// workbook's <see cref="oWorkbook.ColumnDelimeter"/> and <see cref="oWorkbook.FileEncoding"/>.
         /// When hasHeaderRow is true, the first row is consumed as headers (available via CsvHeaders) and not yielded.
         /// </summary>
         IAsyncEnumerable<string[]> ReadCsvRowsAsync(Stream stream, bool hasHeaderRow = false, int? rowLimit = null);
@@ -101,7 +103,7 @@ namespace OoxSpreadsheet
         /// <inheritdoc />
         public async Task<oWorkbook> ImportCsvFileAsync(byte[] file)
         {
-            IFileService _fileService = new DelimitedFileService();
+            IFileService _fileService = new DelimitedFileService(_workbook.ColumnDelimeter, _workbook.FileEncoding);
 
             _workbook = await _fileService.GenerateModel(file);
 
@@ -138,13 +140,8 @@ namespace OoxSpreadsheet
             int rowCount = 0;
             bool isFirstRow = true;
 
-            string? line;
-            while ((line = await reader.ReadLineAsync()) != null)
+            await foreach (var values in DelimitedParser.ParseAsync(reader, _workbook.ColumnDelimeter))
             {
-                if (string.IsNullOrEmpty(line)) continue;
-
-                var values = ParseCsvLine(line);
-
                 if (isFirstRow && hasHeaderRow)
                 {
                     CsvHeaders = values;
@@ -160,24 +157,6 @@ namespace OoxSpreadsheet
                 rowCount++;
                 yield return values;
             }
-        }
-
-        private static string[] ParseCsvLine(string line)
-        {
-            var normalized = line.Replace("\", \"", "\",\"").Replace("\" ,\"", "\",\"");
-            var cols = normalized.Split("\",\"");
-
-            if (cols[0].StartsWith("\""))
-                cols[0] = cols[0][1..];
-
-            var last = cols.Length - 1;
-            if (cols[last].EndsWith("\""))
-                cols[last] = cols[last][..^1];
-
-            for (int i = 0; i < cols.Length; i++)
-                cols[i] = cols[i].Replace("\"\"", "\"");
-
-            return cols;
         }
 
         private static Encoding GetEncoding(FileEncoding fileEncoding) => fileEncoding switch
