@@ -17,7 +17,7 @@ All notable changes to Open Standard Library will be documented in this file.
 - **Delimited import ignored the configured encoding** — `ImportCsvFileAsync()` always decoded as UTF-8 regardless of `FileEncoding`; it now uses the workbook's setting, and the imported workbook keeps its delimiter and encoding
 - **Tab and pipe values containing the delimiter** — Generated tab- and pipe-delimited files wrote such values unquoted, splitting them into extra columns. Values containing the delimiter or a line break, or starting with a quote, are now quoted
 - **XLSX import of error cells** — Cells with cached error values (`t="e"`, e.g. `#N/A`) were imported as Float; they are now imported as String
-- **Documentation accuracy** — ODS and XLSX docs no longer list cell styles and column widths as imported, and list all supported value types. Added DI registration guidance and formula documentation
+- **Documentation accuracy** — ODS and XLSX docs no longer list cell styles and column widths as imported, and list all supported value types. The XLSX example no longer sets `Creator`, which is only written to ODS metadata. Documented that delimited export writes only the first sheet, that `ToArray()` leaves `null` for empty positions, and the `AsFloat()` helper. Added DI registration guidance and formula documentation
 
 ---
 

@@ -7,6 +7,7 @@ await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 {
     var workbook = spreadsheet.Workbook;
 
+    // Written to the ODS metadata (meta.xml); not used for XLSX or delimited files
     workbook.Creator = "Kevin Williams";
 
     // Create worksheets

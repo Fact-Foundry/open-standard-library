@@ -7,8 +7,6 @@ await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 {
     var workbook = spreadsheet.Workbook;
 
-    workbook.Creator = "Kevin Williams";
-
     // Create worksheets
     var sheet1 = await workbook.AddSheetAsync();
     var sheet2 = await workbook.AddSheetAsync("Stuff");
@@ -40,6 +38,8 @@ await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 ```
 
 ## Supported Features
+
+Document properties (`Creator`, `InitialCreator`, `CreationDate`) are not written to XLSX files; they are only used for ODS metadata.
 
 XLSX generation supports:
 

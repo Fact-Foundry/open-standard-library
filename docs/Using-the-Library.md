@@ -33,6 +33,15 @@ await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 }
 ```
 
+The array is sized to the sheet's row and column counts. Positions with no cell contain `null`, not an empty string.
+
+## Cell Helpers
+
+`oCell` has extension methods for converting values in place:
+
+- `FromEpochSeconds()`, `FromEpochMilliseconds()`, `ToEpochSeconds()`, `ToEpochMilliseconds()` — convert between Unix epoch timestamps and ISO 8601 DateTime values (treated as UTC)
+- `AsFloat<T>(float value)` — sets the cell's value and marks it as `Float`. The type parameter is unused; it is kept for backward compatibility
+
 ## Cell Styling
 
 Cells support styling including bold, italic, underline, font color, background color, font name, font size, text wrapping, and borders (thin/medium/thick with color per edge). Styles are applied via the `CellStyle` class on `oCell.Style`.

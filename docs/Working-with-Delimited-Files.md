@@ -11,7 +11,7 @@
 
 ## Create Delimited File
 
-To convert a Workbook to a delimited file, use the following example.
+To convert a Workbook to a delimited file, use the following example. Delimited files have no concept of sheets, so only the first sheet in the workbook is written.
 
 ```csharp
 await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
