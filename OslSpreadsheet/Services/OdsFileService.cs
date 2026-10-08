@@ -126,7 +126,7 @@ namespace OslSpreadsheet.Services
                         }
 
                         var valueType  = cell.Attribute(officeNs + "value-type")?.Value;
-                        var textValue  = cell.Element(textNs + "p")?.Value;
+                        var textValue  = GetCellText(cell, textNs);
                         var numericValue = cell.Attribute(officeNs + "value")?.Value;
                         var booleanValue = cell.Attribute(officeNs + "boolean-value")?.Value;
                         var formulaValue = cell.Attribute(tableNs + "formula")?.Value;
@@ -149,10 +149,11 @@ namespace OslSpreadsheet.Services
                                 var dateValue = cell.Attribute(officeNs + "date-value")?.Value;
                                 cellValue = dateValue ?? textValue ?? "";
                             }
-                            else if (valueType == "float")
+                            else if (valueType is "float" or "percentage" or "currency")
                             {
+                                // office:value holds the actual number; the paragraph text is only the formatted display (e.g. "1,234.50", "25%", "$9.99")
                                 cellType = CellValueType.Float;
-                                cellValue = textValue ?? numericValue ?? "";
+                                cellValue = numericValue ?? textValue ?? "";
                             }
                             else
                             {
@@ -633,6 +634,46 @@ namespace OslSpreadsheet.Services
                 col /= 26;
             }
             return result;
+        }
+
+        /// <summary>
+        /// Returns a cell's text content, or null if it has no paragraphs. Paragraphs are joined with line feeds,
+        /// and the ODF whitespace elements (text:s, text:tab, text:line-break) are expanded to the characters they represent.
+        /// </summary>
+        private static string? GetCellText(XElement cell, XNamespace textNs)
+        {
+            var paragraphs = cell.Elements(textNs + "p").ToList();
+            if (paragraphs.Count == 0)
+                return null;
+
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < paragraphs.Count; i++)
+            {
+                if (i > 0)
+                    sb.Append('\n');
+                AppendText(paragraphs[i], textNs, sb);
+            }
+            return sb.ToString();
+        }
+
+        private static void AppendText(XElement element, XNamespace textNs, System.Text.StringBuilder sb)
+        {
+            foreach (var node in element.Nodes())
+            {
+                if (node is XText text)
+                    sb.Append(text.Value);
+                else if (node is XElement child)
+                {
+                    if (child.Name == textNs + "s")
+                        sb.Append(' ', int.TryParse(child.Attribute(textNs + "c")?.Value, out int count) ? count : 1);
+                    else if (child.Name == textNs + "tab")
+                        sb.Append('\t');
+                    else if (child.Name == textNs + "line-break")
+                        sb.Append('\n');
+                    else
+                        AppendText(child, textNs, sb); // text:span, text:a, etc.
+                }
+            }
         }
 
         /// <summary>

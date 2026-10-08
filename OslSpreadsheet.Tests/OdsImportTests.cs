@@ -144,6 +144,46 @@ public class OdsImportTests
     }
 
     /// <summary>
+    /// Numeric cells import the stored office:value, not the formatted display text; percentage and currency cells are numeric too.
+    /// </summary>
+    [Fact]
+    public async Task Import_NumericCells_UseStoredValueNotDisplayText()
+    {
+        var ods = BuildOds(
+            "<table:table table:name=\"Data\"><table:table-row>" +
+            "<table:table-cell office:value-type=\"float\" office:value=\"1234.5\"><text:p>1,234.50</text:p></table:table-cell>" +
+            "<table:table-cell office:value-type=\"percentage\" office:value=\"0.25\"><text:p>25%</text:p></table:table-cell>" +
+            "<table:table-cell office:value-type=\"currency\" office:currency=\"USD\" office:value=\"9.99\"><text:p>$9.99</text:p></table:table-cell>" +
+            "</table:table-row></table:table>");
+
+        using var spreadsheet = new Spreadsheet();
+        var cells = (await spreadsheet.ImportOdsFileAsync(ods)).Sheets[0].Cells.OrderBy(c => c.Column).ToList();
+
+        Assert.All(cells, c => Assert.Equal(OslSpreadsheet.Models.CellValueType.Float, c.ValueType));
+        Assert.Equal(new[] { "1234.5", "0.25", "9.99" }, cells.Select(c => c.Value));
+    }
+
+    /// <summary>
+    /// A cell with several paragraphs imports as multi-line text, and ODF whitespace elements expand to their characters.
+    /// </summary>
+    [Fact]
+    public async Task Import_MultiParagraphAndWhitespaceElements_ArePreserved()
+    {
+        var ods = BuildOds(
+            "<table:table table:name=\"Data\"><table:table-row>" +
+            "<table:table-cell office:value-type=\"string\"><text:p>line one</text:p><text:p>line two</text:p></table:table-cell>" +
+            "<table:table-cell office:value-type=\"string\"><text:p><text:s text:c=\"2\"/>padded<text:s/></text:p></table:table-cell>" +
+            "<table:table-cell office:value-type=\"string\"><text:p>a<text:tab/>b<text:line-break/>c <text:span>bold</text:span></text:p></table:table-cell>" +
+            "</table:table-row></table:table>");
+
+        var cells = await ImportAsync(ods);
+
+        Assert.Equal("line one\nline two", cells[0].Value);
+        Assert.Equal("  padded ", cells[1].Value);
+        Assert.Equal("a\tb\nc bold", cells[2].Value);
+    }
+
+    /// <summary>
     /// A repeated row inside a header-rows wrapper still advances the row index by its repeat count.
     /// </summary>
     [Fact]
