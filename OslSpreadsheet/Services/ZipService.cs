@@ -3,7 +3,7 @@ using System.IO.Compression;
 
 namespace OslSpreadsheet.Services
 {
-    public static class ZipService
+    internal static class ZipService
     {
         internal static async Task<byte[]> GenerateZipAsync(List<InMemoryFile> files)
         {

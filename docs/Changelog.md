@@ -6,6 +6,8 @@ All notable changes to Open Standard Library will be documented in this file.
 
 ## Unreleased
 
+This release contains breaking changes (see **Removed** and **Changed**) and should be published as **v1.1.0**.
+
 ### Added
 - **Formulas in XLSX and ODS** — `oCell.Formula` (Excel A1 syntax, e.g. `=SUM('My Data'!A1:A3)`) is now written when generating and read when importing. Previously the property was stored but never written to files. ODS formulas are translated to and from OpenFormula syntax (`of:=SUM([$'My Data'.A1:.A3])`). XLSX shared formulas are expanded on import. A cell's `Value` on a formula cell is stored as the cached result; without one, XLSX workbooks are flagged to recalculate on load and ODS cells are left untyped so the application calculates them. The library does not calculate formulas itself
 - **Validator: formulas referencing missing sheets** — Added `XLSX_FORMULA_UNKNOWN_SHEET` and `ODS_FORMULA_UNKNOWN_SHEET` errors for formulas that refer to a sheet not in the workbook
@@ -18,7 +20,12 @@ All notable changes to Open Standard Library will be documented in this file.
 - **Tests** — Added 21 formula tests, 16 delimited import tests, 7 ODS import tests, 2 XLSX generation tests, 3 cell index tests, 19 workbook validation tests, 44 number format tests, and 10 style import tests, bringing test count from 184 to 306
 
 ### Changed
+- **`AsFloat()` signature** — `oCell.AsFloat<T>(float)` is now `AsFloat(double)`. The type parameter did nothing, and the value is now written with an invariant-culture decimal separator; previously a machine with a comma decimal culture wrote `42,5`, which is not a valid number in a file. **Breaking:** callers using `AsFloat<float>(...)` must drop the type argument
+- **`ZipService` is internal** — It was a public class with only internal members, so nothing outside the library could use it
 - **Linear-time cell handling** — `oSpreadsheet` now keeps a position index, so `AddCell()` and the new `GetCell(row, column)` are O(1) instead of scanning every cell. XLSX and ODS generation no longer rescan the cell list for every row or cell. Adding 200,000 cells dropped from minutes to under 50 ms, and importing a 200,000-cell file from over a minute to under a second. `Cells` is still a public list; if it is modified directly, the index is rebuilt on the next lookup
+
+### Removed
+- **`SpreadsheetFileFormat` enum** — Public but never used by any API. Use `ValidationFileFormat` with the validator. **Breaking** only for code that referenced the enum
 
 ### Fixed
 - **ODS import dropped rows inside header-rows and row groups** — Rows wrapped in `table:table-header-rows` (written by LibreOffice when rows are set to repeat on printed pages), `table:table-rows`, or `table:table-row-group` (outline groups) were skipped entirely. They are now imported in document order

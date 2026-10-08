@@ -46,17 +46,5 @@ namespace OslSpreadsheet.Services
                 return [];
             }
         }
-
-        /// <summary>
-        /// Deserializes an XML string into the specified type.
-        /// </summary>
-        internal static async Task<T?> ConvertToObject<T>(string xml) where T : class
-        {
-            return await Task.Run(() =>
-            {
-                using var reader = new StringReader(xml);
-                return new XmlSerializer(typeof(T)).Deserialize(reader) as T;
-            });
-        }
     }
 }

@@ -40,7 +40,7 @@ The array is sized to the sheet's row and column counts. Positions with no cell 
 `oCell` has extension methods for converting values in place:
 
 - `FromEpochSeconds()`, `FromEpochMilliseconds()`, `ToEpochSeconds()`, `ToEpochMilliseconds()` — convert between Unix epoch timestamps and ISO 8601 DateTime values (treated as UTC)
-- `AsFloat<T>(float value)` — sets the cell's value and marks it as `Float`. The type parameter is unused; it is kept for backward compatibility
+- `AsFloat(double value)` — sets the cell's value to the number (always with a period as the decimal separator) and marks it as `Float`
 
 ## Cell Styling
 
