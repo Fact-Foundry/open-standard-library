@@ -1,5 +1,6 @@
 ﻿using OslSpreadsheet.Models;
 using OslSpreadsheet.Services;
+using OslSpreadsheet.Validation;
 using System.Text;
 
 namespace OoxSpreadsheet
@@ -20,18 +21,21 @@ namespace OoxSpreadsheet
         string[]? CsvHeaders { get; }
 
         /// <summary>
-        /// Generates a CSV file from the workbook.
+        /// Generates a delimited file from the workbook's first sheet.
         /// </summary>
+        /// <exception cref="InvalidWorkbookException">The workbook has errors; see <see cref="InvalidWorkbookException.Result"/>.</exception>
         Task<byte[]> GenerateCsvFileAsync();
 
         /// <summary>
         /// Generates an ODS (OpenDocument Spreadsheet) file from the workbook.
         /// </summary>
+        /// <exception cref="InvalidWorkbookException">The workbook has errors; see <see cref="InvalidWorkbookException.Result"/>.</exception>
         Task<byte[]> GenerateOdsFileAsync();
 
         /// <summary>
         /// Generates an XLSX (Office Open XML) file from the workbook.
         /// </summary>
+        /// <exception cref="InvalidWorkbookException">The workbook has errors; see <see cref="InvalidWorkbookException.Result"/>.</exception>
         Task<byte[]> GenerateXlsxFileAsync();
 
         /// <summary>
@@ -79,6 +83,7 @@ namespace OoxSpreadsheet
         /// <inheritdoc />
         public async Task<byte[]> GenerateCsvFileAsync()
         {
+            ThrowIfInvalid(ValidationFileFormat.Delimited);
             IFileService _fileService = new DelimitedFileService();
 
             return await _fileService.GenerateFileAsync(Workbook);
@@ -87,6 +92,7 @@ namespace OoxSpreadsheet
         /// <inheritdoc />
         public async Task<byte[]> GenerateOdsFileAsync()
         {
+            ThrowIfInvalid(ValidationFileFormat.Ods);
             IFileService _fileService = new OdsFileService();
 
             return await _fileService.GenerateFileAsync(Workbook);
@@ -95,9 +101,20 @@ namespace OoxSpreadsheet
         /// <inheritdoc />
         public async Task<byte[]> GenerateXlsxFileAsync()
         {
+            ThrowIfInvalid(ValidationFileFormat.Xlsx);
             IFileService _fileService = new XlsxFileService();
 
             return await _fileService.GenerateFileAsync(Workbook);
+        }
+
+        /// <summary>
+        /// Validates the workbook for the target format and throws if it has errors, so an invalid file is never produced.
+        /// </summary>
+        private void ThrowIfInvalid(ValidationFileFormat format)
+        {
+            var result = _workbook.Validate(format);
+            if (!result.IsValid)
+                throw new InvalidWorkbookException(result);
         }
 
         /// <inheritdoc />

@@ -105,6 +105,36 @@ throw new InvalidOperationException("The model did not produce a valid file.");
 
 If your tool protocol prefers structured data, serialize `result.Issues` (for example with `System.Text.Json`) instead of using `ToString()`.
 
+## Validating a Workbook Before Generating
+
+The checks above run on a finished file. `oWorkbook.Validate()` runs a matching set of checks on the in-memory model, so problems are caught before any file exists:
+
+```csharp
+var result = spreadsheet.Workbook.Validate(ValidationFileFormat.Xlsx); // the format you intend to generate
+
+if (!result.IsValid)
+    Console.WriteLine(result); // "The workbook is NOT valid for XLSX output (1 error, 0 warnings): ..."
+```
+
+`GenerateXlsxFileAsync()`, `GenerateOdsFileAsync()`, and `GenerateCsvFileAsync()` call this automatically for their format and throw `InvalidWorkbookException` if there are errors. The exception's `Result` property is the same `ValidationResult`, and its message is the plain-text report. Warnings don't stop generation.
+
+Rules are prefixed `WB_`:
+
+| Code | Severity | Check |
+|------|----------|-------|
+| `WB_NO_SHEETS` | Error | The workbook has no sheets |
+| `WB_SHEET_NAME_INVALID` | Error | Blank name, or (XLSX) longer than 31 characters or containing `[ ] : * ? / \`, or (ODS) containing `[ ] * ? : / \`. Not checked for delimited output |
+| `WB_SHEET_NAME_DUPLICATE` | Error | Two sheets with the same name, ignoring case |
+| `WB_CELL_POSITION_INVALID` | Error | Row or column below 1, row above 1,048,576, or column above 16,384 |
+| `WB_CELL_NOT_NUMERIC` | Error | A `Float` value that isn't a plain decimal, or an `Int64` value that isn't a whole number. Formula cells may be empty |
+| `WB_CELL_NOT_BOOLEAN` | Error | A `Boolean` value other than `true`, `false`, `1`, or `0` |
+| `WB_CELL_NOT_DATETIME` | Error | A `DateTime` value that doesn't parse as an ISO 8601 date |
+| `WB_TEXT_TOO_LONG` | Error for XLSX, Warning for ODS | Text longer than 32,767 characters |
+| `WB_TEXT_CONTROL_CHAR` | Error | A control character (other than tab, line feed, or carriage return) that XML can't store |
+| `WB_FORMULA_UNKNOWN_SHEET` | Error | A formula refers to a sheet that isn't in the workbook |
+| `WB_FREEZE_INVALID` / `WB_AUTOFILTER_INVALID` | Error | Negative freeze counts, or an auto-filter range whose end is before its start |
+| `WB_DELIMITED_MULTIPLE_SHEETS` | Warning | More than one sheet when generating a delimited file; only the first is written |
+
 ## What Is Checked
 
 Validation is structural. It checks the packaging, XML, references, and cell values that spreadsheet applications rely on to open a file cleanly. It is not a full XML Schema validation of every element and attribute.

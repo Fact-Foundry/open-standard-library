@@ -7,11 +7,14 @@ namespace OslSpreadsheet.Validation
     /// </summary>
     public sealed class ValidationResult
     {
-        internal ValidationResult(ValidationFileFormat format, IReadOnlyList<ValidationIssue> issues, bool truncated)
+        private readonly string _subject;
+
+        internal ValidationResult(ValidationFileFormat format, IReadOnlyList<ValidationIssue> issues, bool truncated, string subject = "file")
         {
             Format = format;
             Issues = issues;
             Truncated = truncated;
+            _subject = subject;
         }
 
         /// <summary>
@@ -54,7 +57,9 @@ namespace OslSpreadsheet.Validation
             var warningCount = Warnings.Count();
 
             var sb = new StringBuilder();
-            if (IsValid)
+            if (_subject == "workbook")
+                sb.Append(IsValid ? $"The workbook is valid for {name} output" : $"The workbook is NOT valid for {name} output");
+            else if (IsValid)
                 sb.Append($"The file is a valid {name} file");
             else
                 sb.Append($"The file is NOT a valid {name} file");

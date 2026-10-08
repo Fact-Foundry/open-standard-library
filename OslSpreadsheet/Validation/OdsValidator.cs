@@ -333,7 +333,7 @@ namespace OslSpreadsheet.Validation
         private static bool IsSpreadsheetMimeType(string value) =>
             value is FileSniffer.OdsMimeType or FileSniffer.OdsTemplateMimeType;
 
-        private static string? ValidateTableName(string name)
+        internal static string? ValidateTableName(string name)
         {
             var invalid = name.IndexOfAny(['[', ']', '*', '?', ':', '/', '\\']);
             if (invalid >= 0)

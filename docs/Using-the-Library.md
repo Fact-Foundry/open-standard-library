@@ -64,6 +64,10 @@ Set `Formula` on a cell using Excel A1 syntax, such as `=SUM(A1:A10)` or `='My D
 
 The library does not calculate formulas. Excel and LibreOffice compute them when the file opens, but tools that only read stored values see an empty result unless you set the cell's `Value` (and `ValueType`) to the known result, which is then stored as the cached value.
 
+## Validating Before Generating
+
+`workbook.Validate(format)` checks the model for anything that would produce an invalid file: values that don't match their `ValueType`, invalid or duplicate sheet names, out-of-range positions, control characters, and formulas that refer to missing sheets. The Generate methods run the same check and throw `InvalidWorkbookException` on errors, so an invalid file is never written. See [Validating Files](Validating-Files.md#validating-a-workbook-before-generating).
+
 ## File Type Guides
 
 - [Working with Delimited Files](Working-with-Delimited-Files.md)

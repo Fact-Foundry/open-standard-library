@@ -154,7 +154,7 @@ public class FormulaTests
     [Theory]
     [InlineData("=SUM(A1:A3)", "of:=SUM([.A1:.A3])")]
     [InlineData("='My Data'!$A$2*2", "of:=[$'My Data'.$A$2]*2")]
-    [InlineData("=SUM(Sheet2!A:A)", "of:=SUM([$Sheet2.A:.A])")]
+    [InlineData("=SUM('My Data'!A:A)", "of:=SUM([$'My Data'.A:.A])")]
     [InlineData("=IF(A1>50,\"big, really\",\"small\")", "of:=IF([.A1]>50;\"big, really\";\"small\")")]
     [InlineData("=LOG10(100)+A1", "of:=LOG10(100)+[.A1]")]
     [InlineData("=ROUND(AVERAGE(B2:B9),1)", "of:=ROUND(AVERAGE([.B2:.B9]);1)")]
@@ -224,10 +224,13 @@ public class FormulaTests
     [Fact]
     public async Task Validator_FormulaReferencingMissingSheet_IsError()
     {
-        using var spreadsheet = BuildFormulaSpreadsheet("=SUM(Sales!A1:A3)+'My Data'!A1");
+        // Generation refuses such a workbook, so write a valid file and rename the referenced sheet in the stored formula
+        using var spreadsheet = BuildFormulaSpreadsheet("=SUM('My Data'!A1:A3)+'My Data'!A1");
+        var xlsxBytes = ReplaceEntry(await spreadsheet.GenerateXlsxFileAsync(), "xl/worksheets/sheet1.xml", xml => xml.Replace("SUM(&apos;My Data&apos;!A1:A3)", "SUM(Sales!A1:A3)"));
+        var odsBytes = ReplaceEntry(await spreadsheet.GenerateOdsFileAsync(), "content.xml", xml => xml.Replace("SUM([$'My Data'.A1:.A3])", "SUM([$Sales.A1:.A3])"));
 
-        var xlsx = SpreadsheetValidator.ValidateXlsx(await spreadsheet.GenerateXlsxFileAsync());
-        var ods = SpreadsheetValidator.ValidateOds(await spreadsheet.GenerateOdsFileAsync());
+        var xlsx = SpreadsheetValidator.ValidateXlsx(xlsxBytes);
+        var ods = SpreadsheetValidator.ValidateOds(odsBytes);
 
         foreach (var (result, code) in new[] { (xlsx, "XLSX_FORMULA_UNKNOWN_SHEET"), (ods, "ODS_FORMULA_UNKNOWN_SHEET") })
         {

@@ -27,6 +27,7 @@ A .NET library for reading and creating spreadsheet files in ODS, XLSX, and deli
 - **Epoch conversion** — `FromEpochSeconds()`, `FromEpochMilliseconds()`, `ToEpochSeconds()`, `ToEpochMilliseconds()` extension methods on cells
 - **Formulas** — set `Formula` on a cell using Excel syntax (`=SUM(A1:A10)`); written to and read from XLSX and ODS, with automatic translation to ODS OpenFormula syntax. The library does not calculate results — see [Formulas](#formulas)
 - **File validation** — `SpreadsheetValidator` checks that XLSX, ODS, and delimited files are well-formed without importing them, returning structured errors and warnings (sheet, cell, row, rule code, message). Useful for vetting files produced by LLMs or other tools before they reach users
+- **Workbook validation** — `Workbook.Validate()` reports problems in the in-memory model (values that don't match their type, bad sheet names, formulas pointing at missing sheets, ...) and the Generate methods refuse to write an invalid file, throwing `InvalidWorkbookException` with the same structured issues
 - **Dependency injection** — implements `ISpreadsheet` with `IDisposable`/`IAsyncDisposable`
 
 ## Installation
@@ -83,6 +84,17 @@ if (!result.IsValid)
     foreach (var issue in result.Errors)
         Console.WriteLine($"{issue.Code} {issue.Sheet}!{issue.Cell}: {issue.Message}");
 }
+```
+
+The Generate methods run the same kind of check on the workbook first, so a bad value never silently produces a broken file:
+
+```csharp
+var cell = sheet.AddCell(2, 2, "n/a", CellValueType.Float);
+
+var check = spreadsheet.Workbook.Validate(ValidationFileFormat.Xlsx);
+// check.IsValid == false; check.Errors[0]: WB_CELL_NOT_NUMERIC at Data!B2
+
+await spreadsheet.GenerateXlsxFileAsync(); // throws InvalidWorkbookException carrying the same result
 ```
 
 See [Validating Files](https://github.com/kupokev/open-standard-library/blob/main/docs/Validating-Files.md) for details.
