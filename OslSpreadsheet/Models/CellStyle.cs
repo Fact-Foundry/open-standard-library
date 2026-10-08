@@ -10,6 +10,14 @@ namespace OslSpreadsheet.Models
         public string? FontName { get; set; }
         public double? FontSize { get; set; }
         public bool WrapText { get; set; }
+
+        /// <summary>
+        /// Number format as an Excel format code, e.g. "#,##0.00", "0%", "\"$\"#,##0.00", "yyyy-mm-dd", "mmm d, yyyy", "h:mm AM/PM".
+        /// Written to XLSX as-is and translated to an ODS data style. Null uses the application default
+        /// (DateTime cells default to yyyy-mm-dd or yyyy-mm-dd hh:mm:ss).
+        /// </summary>
+        public string? NumberFormat { get; set; }
+
         public CellBorder? BorderTop { get; set; }
         public CellBorder? BorderBottom { get; set; }
         public CellBorder? BorderLeft { get; set; }

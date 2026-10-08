@@ -17,6 +17,7 @@ A .NET library for reading and creating spreadsheet files in ODS, XLSX, and deli
 - **Multi-sheet workbooks** — create and import workbooks with multiple named sheets
 - **Cell value types** — String, Float, Boolean, DateTime, and Int64
 - **Cell styling** — bold, italic, underline, font color/name/size, background color, borders (thin/medium/thick with color per edge), and text wrapping. Applied when generating XLSX and ODS; not read on import
+- **Number formats** — `CellStyle.NumberFormat` takes an Excel format code (`#,##0.00`, `0%`, `"$"#,##0.00`, `mmm d, yyyy`, `h:mm AM/PM`, ...). Written to XLSX as-is and translated to ODS data styles; read back on import from both formats
 - **Column widths** — manual `SetColumnWidth()` or automatic `AutoFitColumns()` with min/max constraints. Applied when generating XLSX and ODS; not read on import
 - **Freeze panes** — freeze rows and/or columns with `FreezeRows` and `FreezeColumns`
 - **Auto-filters** — `SetAutoFilter()` for the full range or a custom range
@@ -126,6 +127,12 @@ cell.Style = new CellStyle
     BorderBottom = new CellBorder { Style = BorderStyle.Medium, Color = "#1565C0" },
     WrapText = true
 };
+
+// Number formats use Excel format codes
+sheet.AddCell(2, 1, "1234.5", CellValueType.Float).Style = new CellStyle { NumberFormat = "#,##0.00" };
+sheet.AddCell(2, 2, "0.256", CellValueType.Float).Style = new CellStyle { NumberFormat = "0.0%" };
+sheet.AddCell(2, 3, "9.99", CellValueType.Float).Style = new CellStyle { NumberFormat = "\"$\"#,##0.00" };
+sheet.AddCell(2, 4, "2024-01-31", CellValueType.DateTime).Style = new CellStyle { NumberFormat = "mmmm d, yyyy" };
 ```
 
 ### Formulas

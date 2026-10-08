@@ -148,6 +148,18 @@ namespace OslSpreadsheet.Validation
                     break;
             }
 
+            if (cell.Style?.NumberFormat is { Length: > 0 } numberFormat)
+            {
+                if (FindControlChar(numberFormat) is char badFormat)
+                    issues.Error($"{Prefix}_NUMBER_FORMAT_INVALID",
+                        $"The number format contains the control character U+{(int)badFormat:X4}.",
+                        location: location, sheet: sheetName, cell: cellName, row: cell.Row);
+                else if (format == ValidationFileFormat.Ods && NumberFormatTranslator.ToOdsDataStyle(numberFormat, "x") == null)
+                    issues.Warning($"{Prefix}_NUMBER_FORMAT_UNSUPPORTED",
+                        $"The number format \"{XlsxValidator.Truncate(numberFormat)}\" can't be translated to an ODS data style, so the cell will use the default format. Supported: decimals, thousands separators, percentages, currency symbols, text literals, and date/time patterns.",
+                        location: location, sheet: sheetName, cell: cellName, row: cell.Row);
+            }
+
             if (FindControlChar(value) is char bad)
                 issues.Error($"{Prefix}_TEXT_CONTROL_CHAR",
                     $"The cell value contains the control character U+{(int)bad:X4}, which can't be stored in {FormatName(format)}. Remove it or replace it with a space.",

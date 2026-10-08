@@ -22,7 +22,7 @@ namespace OslSpreadsheet.Services
 
             try
             {
-                var (content, hasDateOnly, hasDateTime) = GenerateContentFile(workbook);
+                var (content, hasDateOnly, hasDateTime, customDataStyles) = GenerateContentFile(workbook);
                 var meta = GenerateMetaFile(workbook);
                 var style = GenerateStyleFile(workbook);
 
@@ -49,7 +49,7 @@ namespace OslSpreadsheet.Services
                     new InMemoryFile()
                     {
                         FileName = "content.xml",
-                        Content = InjectOdsDateStyles(await XmlService.ConvertToXmlAsync(content), hasDateOnly, hasDateTime)
+                        Content = InjectOdsDataStyles(await XmlService.ConvertToXmlAsync(content), hasDateOnly, hasDateTime, customDataStyles)
                     },
                     new InMemoryFile()
                     {
@@ -94,11 +94,13 @@ namespace OslSpreadsheet.Services
 
             XDocument doc;
             using (var contentStream = contentEntry.Open())
-                doc = await Task.Run(() => XDocument.Load(contentStream));
+                doc = await Task.Run(() => XDocument.Load(contentStream, LoadOptions.PreserveWhitespace));
 
             XNamespace tableNs  = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
             XNamespace officeNs = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
             XNamespace textNs   = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+
+            var cellFormatCodes = await ReadCellFormatCodesAsync(doc, archive);
 
             foreach (var table in doc.Descendants(tableNs + "table"))
             {
@@ -111,7 +113,7 @@ namespace OslSpreadsheet.Services
                 {
                     int rowsRepeated = int.TryParse(tableRow.Attribute(tableNs + "number-rows-repeated")?.Value, out int rr) ? rr : 1;
 
-                    var rowData = new List<(int col, string value, CellValueType type, string? formula)>();
+                    var rowData = new List<(int col, string value, CellValueType type, string? formula, string? styleName)>();
                     int colIndex = 0;
 
                     foreach (var cell in tableRow.Elements().Where(e => e.Name == tableNs + "table-cell" || e.Name == tableNs + "covered-table-cell"))
@@ -161,10 +163,11 @@ namespace OslSpreadsheet.Services
                                 cellValue = textValue ?? numericValue ?? "";
                             }
 
+                            var styleName = cell.Attribute(tableNs + "style-name")?.Value;
                             for (int i = 0; i < colsRepeated; i++)
                             {
                                 colIndex++;
-                                rowData.Add((colIndex, cellValue, cellType, formula));
+                                rowData.Add((colIndex, cellValue, cellType, formula, styleName));
                             }
                         }
                         else
@@ -182,11 +185,13 @@ namespace OslSpreadsheet.Services
                     for (int r = 0; r < rowsRepeated; r++)
                     {
                         rowIndex++;
-                        foreach (var (col, value, type, formula) in rowData)
+                        foreach (var (col, value, type, formula, styleName) in rowData)
                         {
                             var oCell = sheet.AddCell(rowIndex, col, value);
                             oCell.ValueType = type;
                             oCell.Formula = formula;
+                            if (styleName != null && cellFormatCodes.TryGetValue(styleName, out var formatCode) && !IsDefaultFormat(formatCode, type))
+                                oCell.Style = new CellStyle { NumberFormat = formatCode };
                         }
                     }
                 }
@@ -244,11 +249,11 @@ namespace OslSpreadsheet.Services
             return workbook;
         }
 
-        private (ODContent content, bool hasDateOnly, bool hasDateTime) GenerateContentFile(oWorkbook workbook)
+        private (ODContent content, bool hasDateOnly, bool hasDateTime, List<string> customDataStyles) GenerateContentFile(oWorkbook workbook)
         {
             var file = new ODContent();
 
-            var cellStyleMap = BuildOdsCellStyles(workbook, file, out bool hasDateOnly, out bool hasDateTime);
+            var cellStyleMap = BuildOdsCellStyles(workbook, file, out bool hasDateOnly, out bool hasDateTime, out var customDataStyles);
 
             foreach (var s in workbook.Sheets)
             {
@@ -315,19 +320,8 @@ namespace OslSpreadsheet.Services
                             if (cell != null)
                             {
                                 var cellStyleName = "ce1";
-                                if (cell.ValueType == CellValueType.DateTime)
-                                {
-                                    var datePrefix = IsDateOnly(cell.Value) ? "do|" : "dt|";
-                                    var visualKey = cell.Style != null ? GetStyleKey(cell.Style) : "";
-                                    if (cellStyleMap.TryGetValue($"{datePrefix}{visualKey}", out var mapped))
-                                        cellStyleName = mapped;
-                                }
-                                else if (cell.Style != null)
-                                {
-                                    var key = GetStyleKey(cell.Style);
-                                    if (cellStyleMap.TryGetValue(key, out var mapped))
-                                        cellStyleName = mapped;
-                                }
+                                if (CellStyleMapKey(cell) is string mapKey && cellStyleMap.TryGetValue(mapKey, out var mapped))
+                                    cellStyleName = mapped;
 
                                 var tableCell = new ODContent.Table.TableRow.TableCell()
                                 {
@@ -337,8 +331,12 @@ namespace OslSpreadsheet.Services
 
                                 if (cell.ValueType == CellValueType.Float || cell.ValueType == CellValueType.Int64)
                                 {
-                                    tableCell.ValueType = "float";
+                                    // Percentage and currency formats have their own ODS value types
+                                    var formatCode = CustomFormatCode(cell);
+                                    tableCell.ValueType = (formatCode != null ? NumberFormatTranslator.OdsValueType(formatCode) : null) ?? "float";
                                     tableCell.NumericValue = cell.Value;
+                                    if (tableCell.ValueType == "currency")
+                                        tableCell.Currency = NumberFormatTranslator.CurrencyCode(NumberFormatTranslator.Parse(formatCode!).CurrencySymbol);
                                 }
                                 else if (cell.ValueType == CellValueType.Boolean)
                                 {
@@ -442,7 +440,7 @@ namespace OslSpreadsheet.Services
                 file.body.spreadsheet.databaseRanges.Ranges = dbRanges;
             }
 
-            return (file, hasDateOnly, hasDateTime);
+            return (file, hasDateOnly, hasDateTime, customDataStyles);
         }
 
         /// <summary>
@@ -499,40 +497,49 @@ namespace OslSpreadsheet.Services
         private const string OdsDateStyleName = "NDdate";
         private const string OdsDateTimeStyleName = "NDdatetime";
 
-        private static Dictionary<string, string> BuildOdsCellStyles(oWorkbook workbook, ODContent file, out bool hasDateOnly, out bool hasDateTime)
+        private static Dictionary<string, string> BuildOdsCellStyles(oWorkbook workbook, ODContent file, out bool hasDateOnly, out bool hasDateTime, out List<string> customDataStyles)
         {
             var map = new Dictionary<string, string>();
             var nextIndex = 2;
             hasDateOnly = false;
             hasDateTime = false;
 
+            // One data style per distinct format code, named N100, N101, ...
+            var dataStyleNames = new Dictionary<string, string>();
+            customDataStyles = new List<string>();
+
             foreach (var sheet in workbook.Sheets)
                 foreach (var cell in sheet.Cells)
                 {
                     var cs = cell.Style ?? new CellStyle();
-                    var visualKey = cell.Style != null ? GetStyleKey(cs) : null;
-                    string? datePrefix = null;
+                    var mapKey = CellStyleMapKey(cell);
+                    if (mapKey == null) continue;
 
-                    if (cell.ValueType == CellValueType.DateTime)
+                    var formatCode = CustomFormatCode(cell);
+                    if (formatCode == null && cell.ValueType == CellValueType.DateTime)
                     {
-                        bool dateOnly = IsDateOnly(cell.Value);
-                        datePrefix = dateOnly ? "do|" : "dt|";
-                        if (dateOnly) hasDateOnly = true; else hasDateTime = true;
+                        if (IsDateOnly(cell.Value)) hasDateOnly = true; else hasDateTime = true;
                     }
 
-                    var mapKey = datePrefix != null
-                        ? $"{datePrefix}{visualKey ?? ""}"
-                        : visualKey;
-
-                    if (mapKey == null) continue;
                     if (map.ContainsKey(mapKey)) continue;
 
                     var name = $"ce{nextIndex++}";
                     map[mapKey] = name;
 
-                    var dataStyleName = datePrefix == "do|" ? OdsDateStyleName
-                        : datePrefix == "dt|" ? OdsDateTimeStyleName
-                        : "N0";
+                    string dataStyleName;
+                    if (formatCode != null)
+                    {
+                        if (!dataStyleNames.TryGetValue(formatCode, out dataStyleName!))
+                        {
+                            dataStyleName = $"N{100 + dataStyleNames.Count}";
+                            dataStyleNames[formatCode] = dataStyleName;
+                            customDataStyles.Add(NumberFormatTranslator.ToOdsDataStyle(formatCode, dataStyleName)!);
+                        }
+                    }
+                    else
+                        dataStyleName = mapKey.StartsWith("do|") ? OdsDateStyleName
+                            : mapKey.StartsWith("dt|") ? OdsDateTimeStyleName
+                            : "N0";
 
                     var style = new ODContent.AutomaticStyles.Style
                     {
@@ -577,12 +584,19 @@ namespace OslSpreadsheet.Services
         private static bool IsDateOnly(string value) =>
             DateTime.TryParse(value, out var dt) && dt.TimeOfDay == TimeSpan.Zero && !value.Contains('T');
 
-        private static byte[] InjectOdsDateStyles(byte[] contentXml, bool hasDateOnly, bool hasDateTime)
+        /// <summary>
+        /// Inserts the data style elements (default date styles and custom number formats) into office:automatic-styles.
+        /// They are written as raw XML because the XmlSerializer content model has no classes for number:*-style elements.
+        /// </summary>
+        private static byte[] InjectOdsDataStyles(byte[] contentXml, bool hasDateOnly, bool hasDateTime, List<string> customDataStyles)
         {
-            if (!hasDateOnly && !hasDateTime) return contentXml;
+            if (!hasDateOnly && !hasDateTime && customDataStyles.Count == 0) return contentXml;
 
             var xml = Encoding.UTF8.GetString(contentXml);
             var sb = new StringBuilder();
+
+            foreach (var dataStyle in customDataStyles)
+                sb.Append(dataStyle);
 
             if (hasDateOnly)
             {
@@ -617,7 +631,26 @@ namespace OslSpreadsheet.Services
         }
 
         private static string GetStyleKey(CellStyle s) =>
-            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}|{s.NumberFormat}";
+
+        /// <summary>
+        /// A cell's NumberFormat when it is set and can be expressed as an ODS data style; otherwise null and the defaults apply.
+        /// </summary>
+        private static string? CustomFormatCode(oCell cell) =>
+            !string.IsNullOrEmpty(cell.Style?.NumberFormat) && NumberFormatTranslator.ToOdsDataStyle(cell.Style.NumberFormat, "x") != null
+                ? cell.Style.NumberFormat
+                : null;
+
+        /// <summary>
+        /// Key into the cell style map: the visual style key, prefixed by the default date style kind when no custom format applies.
+        /// </summary>
+        private static string? CellStyleMapKey(oCell cell)
+        {
+            var visualKey = cell.Style != null ? GetStyleKey(cell.Style) : null;
+            if (cell.ValueType == CellValueType.DateTime && CustomFormatCode(cell) == null)
+                return (IsDateOnly(cell.Value) ? "do|" : "dt|") + (visualKey ?? "");
+            return visualKey;
+        }
 
         private static string EdgeKey(CellBorder? b) =>
             b == null ? "" : $"{b.Style}:{b.Color}";
@@ -635,6 +668,50 @@ namespace OslSpreadsheet.Services
             }
             return result;
         }
+
+        /// <summary>
+        /// Maps each table-cell style name to the Excel format code of its data style. Styles with no translatable
+        /// data style are omitted. Data styles may live in content.xml or styles.xml.
+        /// </summary>
+        private static async Task<Dictionary<string, string>> ReadCellFormatCodesAsync(XDocument contentDoc, ZipArchive archive)
+        {
+            XNamespace styleNs = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
+            XNamespace numberNs = "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0";
+
+            var dataStyles = new Dictionary<string, XElement>();
+            void CollectDataStyles(XDocument document)
+            {
+                foreach (var ds in document.Descendants().Where(e => e.Name.Namespace == numberNs && e.Name.LocalName.EndsWith("-style", StringComparison.Ordinal)))
+                    if ((string?)ds.Attribute(styleNs + "name") is string name)
+                        dataStyles[name] = ds;
+            }
+
+            CollectDataStyles(contentDoc);
+            var stylesEntry = archive.GetEntry("styles.xml");
+            if (stylesEntry != null)
+            {
+                using var stylesStream = stylesEntry.Open();
+                CollectDataStyles(await Task.Run(() => XDocument.Load(stylesStream, LoadOptions.PreserveWhitespace)));
+            }
+
+            var result = new Dictionary<string, string>();
+            foreach (var cellStyle in contentDoc.Descendants(styleNs + "style").Where(s => (string?)s.Attribute(styleNs + "family") == "table-cell"))
+            {
+                var name = (string?)cellStyle.Attribute(styleNs + "name");
+                var dataStyleName = (string?)cellStyle.Attribute(styleNs + "data-style-name");
+                if (name == null || dataStyleName == null || !dataStyles.TryGetValue(dataStyleName, out var dataStyle)) continue;
+
+                if (NumberFormatTranslator.FromOdsDataStyle(dataStyle) is string code)
+                    result[name] = code;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// The library's own default date formats aren't reported as a NumberFormat on import, so a round-trip leaves Style null.
+        /// </summary>
+        private static bool IsDefaultFormat(string code, CellValueType valueType) =>
+            valueType == CellValueType.DateTime && code is NumberFormatTranslator.DefaultDateCode or NumberFormatTranslator.DefaultDateTimeCode;
 
         /// <summary>
         /// Returns a cell's text content, or null if it has no paragraphs. Paragraphs are joined with line feeds,

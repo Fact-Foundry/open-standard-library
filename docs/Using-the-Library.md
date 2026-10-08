@@ -46,6 +46,29 @@ The array is sized to the sheet's row and column counts. Positions with no cell 
 
 Cells support styling including bold, italic, underline, font color, background color, font name, font size, text wrapping, and borders (thin/medium/thick with color per edge). Styles are applied via the `CellStyle` class on `oCell.Style`.
 
+## Number Formats
+
+`CellStyle.NumberFormat` takes an Excel format code and controls how a number or date is displayed:
+
+| Code | Displays `1234.5` / `2024-01-31 13:45` as |
+|------|------|
+| `#,##0.00` | `1,234.50` |
+| `0` | `1235` |
+| `0.0%` | `25.6%` (for the value `0.256`) |
+| `"$"#,##0.00` | `$1,234.50` |
+| `#,##0.00 "EUR"` | `1,234.50 EUR` |
+| `mm/dd/yyyy` | `01/31/2024` |
+| `d-mmm-yy` | `31-Jan-24` |
+| `mmmm d, yyyy` | `January 31, 2024` |
+| `dddd` | `Wednesday` |
+| `h:mm AM/PM` | `1:45 PM` |
+| `yyyy-mm-dd hh:mm` | `2024-01-31 13:45` |
+| `@` | text as-is |
+
+XLSX stores the code directly, so any code Excel accepts works there. ODS has no format-code syntax, so the code is translated to an ODS data style. The translation supports decimals, thousands separators, percentages, currency symbols (including `[$€-407]`-style locale tags, which become a plain symbol), text literals, and date/time patterns built from `y`, `m`, `d`, `h`, `s`, and `AM/PM`. It doesn't support multiple sections (`positive;negative`), colors, conditions, scientific notation, fractions, elapsed time (`[h]:mm`), or padding characters; `workbook.Validate(ValidationFileFormat.Ods)` reports those as `WB_NUMBER_FORMAT_UNSUPPORTED` warnings and the cell falls back to the default format.
+
+On import, the format is read back into `NumberFormat` from both XLSX (including Excel's built-in formats, which files store only by id) and ODS. `DateTime` cells written without a format use the library defaults (`yyyy-mm-dd` or `yyyy-mm-dd hh:mm:ss`) and import with no `Style`.
+
 ## Freeze Panes
 
 Sheets support freezing rows and columns via `FreezeRows` and `FreezeColumns` properties on `oSpreadsheet`.

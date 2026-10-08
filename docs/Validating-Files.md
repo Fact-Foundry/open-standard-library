@@ -132,6 +132,8 @@ Rules are prefixed `WB_`:
 | `WB_TEXT_TOO_LONG` | Error for XLSX, Warning for ODS | Text longer than 32,767 characters |
 | `WB_TEXT_CONTROL_CHAR` | Error | A control character (other than tab, line feed, or carriage return) that XML can't store |
 | `WB_FORMULA_UNKNOWN_SHEET` | Error | A formula refers to a sheet that isn't in the workbook |
+| `WB_NUMBER_FORMAT_INVALID` | Error | A `NumberFormat` containing a control character |
+| `WB_NUMBER_FORMAT_UNSUPPORTED` | Warning (ODS only) | A `NumberFormat` that can't be translated to an ODS data style; the cell falls back to the default format |
 | `WB_FREEZE_INVALID` / `WB_AUTOFILTER_INVALID` | Error | Negative freeze counts, or an auto-filter range whose end is before its start |
 | `WB_DELIMITED_MULTIPLE_SHEETS` | Warning | More than one sheet when generating a delimited file; only the first is written |
 

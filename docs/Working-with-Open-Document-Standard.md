@@ -47,6 +47,7 @@ ODS generation supports:
 - Multiple sheets
 - Cell value types: String, Float, Int64, Boolean, DateTime
 - Cell styling (bold, italic, underline, font color, background color, font name, font size, borders, text wrapping)
+- Number formats (see [Using the Library](Using-the-Library.md#number-formats))
 - Freeze panes
 - Auto filters
 - Column widths
@@ -59,8 +60,9 @@ ODS import supports:
 - Freeze panes
 - Auto filters, and header row detection from freeze panes or auto filters
 - Formulas, along with any cached results stored in the file
+- Number formats
 
-Cell styles and column widths are not read on import.
+Other cell styles and column widths are not read on import.
 
 Formulas are written in Excel syntax and translated to OpenFormula (`of:=SUM([.A1:.A10])`) in the file; on import they are translated back. The library does not calculate formulas, so generated files contain no cached results unless you set the cell's `Value`. Excel and LibreOffice calculate on open; tools that only read stored values (such as pandas or file previewers) show those cells as empty.
 

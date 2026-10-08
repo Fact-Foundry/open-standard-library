@@ -353,6 +353,9 @@ namespace OslSpreadsheet.Models.Files.ods
                     [XmlAttribute("date-value", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0")] // namespace:office
                     public string? DateValue { get; set; }
 
+                    [XmlAttribute("currency", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0")] // namespace:office
+                    public string? Currency { get; set; }
+
                     [XmlAttribute("number-columns-repeated", Form = System.Xml.Schema.XmlSchemaForm.Qualified, Namespace = "urn:oasis:names:tc:opendocument:xmlns:table:1.0")] // namespace:table
                     public string? NumberColumnsRepeated { get; set; }
 

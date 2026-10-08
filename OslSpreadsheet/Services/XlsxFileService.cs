@@ -69,20 +69,22 @@ namespace OslSpreadsheet.Services
             if (ssEntry != null)
             {
                 using var ssStream = ssEntry.Open();
-                var ssDoc = await Task.Run(() => XDocument.Load(ssStream));
+                var ssDoc = await Task.Run(() => XDocument.Load(ssStream, LoadOptions.PreserveWhitespace));
                 sharedStrings = ssDoc.Descendants(mainNs + "si")
                     .Select(si => string.Concat(si.Descendants(mainNs + "t").Select(t => t.Value)))
                     .ToList();
             }
 
-            // Load styles.xml to detect date-formatted cells
+            // Load styles.xml to detect date-formatted cells and read each cell format's number format code
             var dateXfIndices = new HashSet<int>();
+            var xfFormatCodes = new Dictionary<int, string>();
             var stylesEntry = archive.GetEntry("xl/styles.xml");
             if (stylesEntry != null)
             {
                 using var stylesStream = stylesEntry.Open();
                 var stylesDoc = await Task.Run(() => XDocument.Load(stylesStream));
                 dateXfIndices = GetDateXfIndices(stylesDoc, mainNs);
+                xfFormatCodes = GetXfFormatCodes(stylesDoc, mainNs);
             }
 
             // Load workbook.xml
@@ -119,7 +121,7 @@ namespace OslSpreadsheet.Services
 
                 XDocument sheetDoc;
                 using (var sheetStream = sheetEntry.Open())
-                    sheetDoc = await Task.Run(() => XDocument.Load(sheetStream));
+                    sheetDoc = await Task.Run(() => XDocument.Load(sheetStream, LoadOptions.PreserveWhitespace));
 
                 var pane = sheetDoc.Descendants(mainNs + "pane").FirstOrDefault();
                 if (pane?.Attribute("state")?.Value == "frozen")
@@ -187,6 +189,10 @@ namespace OslSpreadsheet.Services
                         var oCell = sheet.AddCell(rowNum, colNum, value);
                         oCell.ValueType = valueType;
                         oCell.Formula = ReadFormula(cellEl.Element(mainNs + "f"), rowNum, colNum, sharedFormulas);
+
+                        if (int.TryParse(cellEl.Attribute("s")?.Value, out int xfIndex) && xfFormatCodes.TryGetValue(xfIndex, out var formatCode)
+                            && !IsDefaultFormat(formatCode, valueType))
+                            oCell.Style = new CellStyle { NumberFormat = formatCode };
                     }
                 }
 
@@ -309,8 +315,6 @@ namespace OslSpreadsheet.Services
 
         private static (byte[] stylesXml, Dictionary<string, int> styleIndexMap) BuildStylesForWorkbook(oWorkbook workbook)
         {
-            bool hasDateCells = workbook.Sheets.Any(s => s.Cells.Any(c => c.ValueType == CellValueType.DateTime));
-
             var defaultFontKey = GetFontKey(new CellStyle());
             var fonts = new List<string> { "<font><sz val=\"11\"/><name val=\"Calibri\"/></font>" };
             var fontKeys = new Dictionary<string, int> { [defaultFontKey] = 0 };
@@ -331,18 +335,36 @@ namespace OslSpreadsheet.Services
 
             var styleIndexMap = new Dictionary<string, int>();
 
+            // Custom format codes get ids from 164 upward; the two default date codes keep their fixed ids
+            var customNumFmts = new Dictionary<string, int>
+            {
+                [DateTimeFormatCode] = DateTimeNumFmtId,
+                [DateOnlyFormatCode] = DateOnlyNumFmtId
+            };
+            var usedNumFmtIds = new HashSet<int>();
+
+            int NumFmtIdFor(string? code)
+            {
+                if (code == null) return 0;
+                if (NumberFormatTranslator.BuiltInId(code) is int builtIn) return builtIn;
+                if (!customNumFmts.TryGetValue(code, out int id))
+                {
+                    id = 164 + customNumFmts.Count;
+                    customNumFmts[code] = id;
+                }
+                return id;
+            }
+
             var uniqueEntries = new Dictionary<string, (CellStyle style, int numFmtId)>();
             foreach (var sheet in workbook.Sheets)
                 foreach (var cell in sheet.Cells)
                 {
-                    int numFmtId = cell.ValueType == CellValueType.DateTime
-                        ? (IsDateOnly(cell.Value) ? DateOnlyNumFmtId : DateTimeNumFmtId)
-                        : 0;
-                    var style = cell.Style ?? new CellStyle();
-                    var mapKey = numFmtId > 0 ? $"dt{numFmtId}|{GetStyleKey(style)}" : GetStyleKey(style);
+                    var mapKey = StyleMapKey(cell);
+                    if (mapKey == null) continue;
 
-                    if (cell.Style != null || numFmtId > 0)
-                        uniqueEntries.TryAdd(mapKey, (style, numFmtId));
+                    int numFmtId = NumFmtIdFor(EffectiveFormatCode(cell));
+                    usedNumFmtIds.Add(numFmtId);
+                    uniqueEntries.TryAdd(mapKey, (cell.Style ?? new CellStyle(), numFmtId));
                 }
 
             foreach (var (key, (style, numFmtId)) in uniqueEntries)
@@ -399,14 +421,12 @@ namespace OslSpreadsheet.Services
             var sb = new StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
             sb.Append("<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
-            if (hasDateCells)
+            var customUsed = customNumFmts.Where(kv => usedNumFmtIds.Contains(kv.Value)).OrderBy(kv => kv.Value).ToList();
+            if (customUsed.Count > 0)
             {
-                var usedFmtIds = uniqueEntries.Values.Select(e => e.numFmtId).Where(id => id > 0).Distinct().ToList();
-                sb.Append($"<numFmts count=\"{usedFmtIds.Count}\">");
-                if (usedFmtIds.Contains(DateTimeNumFmtId))
-                    sb.Append($"<numFmt numFmtId=\"{DateTimeNumFmtId}\" formatCode=\"{DateTimeFormatCode}\"/>");
-                if (usedFmtIds.Contains(DateOnlyNumFmtId))
-                    sb.Append($"<numFmt numFmtId=\"{DateOnlyNumFmtId}\" formatCode=\"{DateOnlyFormatCode}\"/>");
+                sb.Append($"<numFmts count=\"{customUsed.Count}\">");
+                foreach (var (code, id) in customUsed)
+                    sb.Append($"<numFmt numFmtId=\"{id}\" formatCode=\"{SecurityElement.Escape(code)}\"/>");
                 sb.Append("</numFmts>");
             }
             sb.Append($"<fonts count=\"{fonts.Count}\">");
@@ -426,6 +446,34 @@ namespace OslSpreadsheet.Services
 
             return (Utf8(sb.ToString()), styleIndexMap);
         }
+
+        /// <summary>
+        /// Maps each cellXfs index to its number format code (custom codes from numFmts, or Excel's built-in codes).
+        /// Entries with the General format (id 0) are omitted.
+        /// </summary>
+        private static Dictionary<int, string> GetXfFormatCodes(XDocument stylesDoc, XNamespace ns)
+        {
+            var codes = new Dictionary<int, string>(NumberFormatTranslator.BuiltInFormats);
+            foreach (var nf in stylesDoc.Descendants(ns + "numFmt"))
+                if (int.TryParse(nf.Attribute("numFmtId")?.Value, out int id) && nf.Attribute("formatCode")?.Value is string code)
+                    codes[id] = code;
+
+            var result = new Dictionary<int, string>();
+            var xfs = stylesDoc.Descendants(ns + "cellXfs").Elements(ns + "xf").ToList();
+            for (int i = 0; i < xfs.Count; i++)
+            {
+                var numFmtId = int.TryParse(xfs[i].Attribute("numFmtId")?.Value, out int nfId) ? nfId : 0;
+                if (numFmtId != 0 && codes.TryGetValue(numFmtId, out var code))
+                    result[i] = code;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// The library's own default date formats aren't reported as a NumberFormat on import, so a round-trip leaves Style null.
+        /// </summary>
+        private static bool IsDefaultFormat(string code, CellValueType valueType) =>
+            valueType == CellValueType.DateTime && code is DateTimeFormatCode or DateOnlyFormatCode;
 
         private static HashSet<int> GetDateXfIndices(XDocument stylesDoc, XNamespace ns)
         {
@@ -452,7 +500,31 @@ namespace OslSpreadsheet.Services
         }
 
         private static string GetStyleKey(CellStyle s) =>
-            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}|{s.NumberFormat}";
+
+        /// <summary>
+        /// The format code a cell will be written with: its style's NumberFormat, else the default date code for DateTime cells, else null.
+        /// </summary>
+        private static string? EffectiveFormatCode(oCell cell)
+        {
+            if (!string.IsNullOrEmpty(cell.Style?.NumberFormat))
+                return cell.Style.NumberFormat;
+            if (cell.ValueType == CellValueType.DateTime)
+                return IsDateOnly(cell.Value) ? DateOnlyFormatCode : DateTimeFormatCode;
+            return null;
+        }
+
+        /// <summary>
+        /// Key into the style index map for a cell: the visual style key plus the effective format code.
+        /// Returns null when the cell needs no style entry.
+        /// </summary>
+        private static string? StyleMapKey(oCell cell)
+        {
+            var code = EffectiveFormatCode(cell);
+            if (cell.Style == null && code == null)
+                return null;
+            return $"{GetStyleKey(cell.Style ?? new CellStyle())}|fmt:{code}";
+        }
 
         private static string GetFontKey(CellStyle s) =>
             $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.FontName}|{s.FontSize}";
@@ -540,20 +612,8 @@ namespace OslSpreadsheet.Services
                 {
                     var cellRef = $"{ColumnLetter(cell.Column)}{cell.Row}";
                     var styleAttr = "";
-                    var visualKey = cell.Style != null ? GetStyleKey(cell.Style) : null;
-
-                    if (cell.ValueType == CellValueType.DateTime)
-                    {
-                        int fmtId = IsDateOnly(cell.Value) ? DateOnlyNumFmtId : DateTimeNumFmtId;
-                        var dateKey = visualKey != null ? $"dt{fmtId}|{visualKey}" : $"dt{fmtId}|{GetStyleKey(new CellStyle())}";
-                        if (styleIndexMap.TryGetValue(dateKey, out int si))
-                            styleAttr = $" s=\"{si}\"";
-                    }
-                    else if (visualKey != null)
-                    {
-                        if (styleIndexMap.TryGetValue(visualKey, out int si) && si > 0)
-                            styleAttr = $" s=\"{si}\"";
-                    }
+                    if (StyleMapKey(cell) is string mapKey && styleIndexMap.TryGetValue(mapKey, out int si) && si > 0)
+                        styleAttr = $" s=\"{si}\"";
 
                     if (FormulaTranslator.Normalize(cell.Formula) is string formula)
                         sb.Append(BuildFormulaCell(cell, cellRef, styleAttr, formula));
