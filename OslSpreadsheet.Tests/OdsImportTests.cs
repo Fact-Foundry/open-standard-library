@@ -103,6 +103,47 @@ public class OdsImportTests
     }
 
     /// <summary>
+    /// Covered cells (hidden by a merge) occupy column positions, so cells after a merged range keep their columns.
+    /// </summary>
+    [Fact]
+    public async Task Import_CoveredCells_KeepColumnPositions()
+    {
+        var ods = BuildOds(
+            "<table:table table:name=\"Data\">" +
+            "<table:table-row>" +
+                "<table:table-cell office:value-type=\"string\" table:number-columns-spanned=\"3\" table:number-rows-spanned=\"1\"><text:p>Title</text:p></table:table-cell>" +
+                "<table:covered-table-cell table:number-columns-repeated=\"2\"/>" +
+                StringCell("after-merge") +
+            "</table:table-row>" +
+            Row("a", "b", "c", "d") +
+            "</table:table>");
+
+        var cells = await ImportAsync(ods);
+
+        Assert.Equal(new[] { (1, 1, "Title"), (1, 4, "after-merge"), (2, 1, "a"), (2, 2, "b"), (2, 3, "c"), (2, 4, "d") }, cells);
+    }
+
+    /// <summary>
+    /// Content inside a covered cell is hidden by the merge and is not imported.
+    /// </summary>
+    [Fact]
+    public async Task Import_CoveredCellContent_IsIgnored()
+    {
+        var ods = BuildOds(
+            "<table:table table:name=\"Data\">" +
+            "<table:table-row>" +
+                "<table:table-cell office:value-type=\"string\" table:number-columns-spanned=\"2\"><text:p>Merged</text:p></table:table-cell>" +
+                "<table:covered-table-cell office:value-type=\"string\"><text:p>hidden</text:p></table:covered-table-cell>" +
+                StringCell("visible") +
+            "</table:table-row>" +
+            "</table:table>");
+
+        var cells = await ImportAsync(ods);
+
+        Assert.Equal(new[] { (1, 1, "Merged"), (1, 3, "visible") }, cells);
+    }
+
+    /// <summary>
     /// A repeated row inside a header-rows wrapper still advances the row index by its repeat count.
     /// </summary>
     [Fact]

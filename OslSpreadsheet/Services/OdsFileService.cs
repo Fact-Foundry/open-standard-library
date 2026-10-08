@@ -114,9 +114,16 @@ namespace OslSpreadsheet.Services
                     var rowData = new List<(int col, string value, CellValueType type, string? formula)>();
                     int colIndex = 0;
 
-                    foreach (var cell in tableRow.Elements(tableNs + "table-cell"))
+                    foreach (var cell in tableRow.Elements().Where(e => e.Name == tableNs + "table-cell" || e.Name == tableNs + "covered-table-cell"))
                     {
                         int colsRepeated = int.TryParse(cell.Attribute(tableNs + "number-columns-repeated")?.Value, out int cr) ? cr : 1;
+
+                        // Covered cells are hidden by a merge; they occupy column positions but hold no visible data
+                        if (cell.Name == tableNs + "covered-table-cell")
+                        {
+                            colIndex += colsRepeated;
+                            continue;
+                        }
 
                         var valueType  = cell.Attribute(officeNs + "value-type")?.Value;
                         var textValue  = cell.Element(textNs + "p")?.Value;
