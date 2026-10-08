@@ -310,7 +310,7 @@ namespace OslSpreadsheet.Services
 
                         for (int c = 1; c <= colCount; c++)
                         {
-                            var cell = s.Cells.FirstOrDefault(x => x.Row == r && x.Column == c);
+                            var cell = s.GetCell(r, c);
 
                             if (cell != null)
                             {

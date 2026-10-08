@@ -529,13 +529,14 @@ namespace OslSpreadsheet.Services
 
             sb.Append("<sheetData>");
 
-            for (int r = 1; r <= sheet.RowCount; r++)
-            {
-                var rowCells = sheet.GetRow(r);
-                if (!rowCells.Any()) continue;
+            // Group cells by row in one pass rather than scanning the cell list once per row
+            var rows = sheet.Cells.GroupBy(c => c.Row).OrderBy(g => g.Key);
 
+            foreach (var rowGroup in rows)
+            {
+                var r = rowGroup.Key;
                 sb.Append($"<row r=\"{r}\">");
-                foreach (var cell in rowCells)
+                foreach (var cell in rowGroup.OrderBy(c => c.Column))
                 {
                     var cellRef = $"{ColumnLetter(cell.Column)}{cell.Row}";
                     var styleAttr = "";

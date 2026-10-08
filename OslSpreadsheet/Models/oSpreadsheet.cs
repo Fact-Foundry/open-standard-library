@@ -8,6 +8,9 @@
 
         private readonly Dictionary<int, double> _columnWidths;
 
+        // Position index for O(1) cell lookup. Rebuilt if Cells was modified directly (detected by a count mismatch).
+        private readonly Dictionary<(int Row, int Column), oCell> _cellIndex;
+
         public oSpreadsheet(int index, string name)
         {
             _index = index;
@@ -15,6 +18,8 @@
             _cells = new();
 
             _columnWidths = new();
+
+            _cellIndex = new();
 
             SheetName = name;
         }
@@ -71,17 +76,12 @@
         {
             if (!_cells.Any()) return;
 
-            for (int c = 1; c <= ColumnCount; c++)
-            {
-                var maxLength = _cells
-                    .Where(x => x.Column == c)
-                    .Select(x => x.Value.Length)
-                    .DefaultIfEmpty(0)
-                    .Max();
+            var maxLengths = new int[ColumnCount + 1];
+            foreach (var cell in _cells)
+                maxLengths[cell.Column] = Math.Max(maxLengths[cell.Column], cell.Value.Length);
 
-                var width = Math.Clamp(maxLength + 2, minWidth, maxWidth);
-                _columnWidths[c] = width;
-            }
+            for (int c = 1; c < maxLengths.Length; c++)
+                _columnWidths[c] = Math.Clamp(maxLengths[c] + 2, minWidth, maxWidth);
         }
 
         public oCell AddCell(int row, int column)
@@ -127,12 +127,14 @@
             {
                 lock (this)
                 {
-                    var index = Cells.FindIndex(x => x.Row == cell.Row && x.Column == cell.Column);
+                    EnsureIndex();
 
-                    if (index == -1)
-                        Cells.Add(cell);
+                    if (_cellIndex.TryGetValue((cell.Row, cell.Column), out var existing))
+                        _cells[_cells.IndexOf(existing)] = cell;
                     else
-                        Cells[index] = cell;
+                        _cells.Add(cell);
+
+                    _cellIndex[(cell.Row, cell.Column)] = cell;
 
                     return cell;
                 }
@@ -140,6 +142,30 @@
             catch
             {
                 throw new Exception("There was an error adding a new cell to the spreadsheet");
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds the position index when Cells has been changed directly rather than through AddCell.
+        /// </summary>
+        private void EnsureIndex()
+        {
+            if (_cellIndex.Count == _cells.Count) return;
+
+            _cellIndex.Clear();
+            foreach (var cell in _cells)
+                _cellIndex[(cell.Row, cell.Column)] = cell;
+        }
+
+        /// <summary>
+        /// Returns the cell at the given position, or null if there is none.
+        /// </summary>
+        public oCell? GetCell(int row, int column)
+        {
+            lock (this)
+            {
+                EnsureIndex();
+                return _cellIndex.TryGetValue((row, column), out var cell) ? cell : null;
             }
         }
 
