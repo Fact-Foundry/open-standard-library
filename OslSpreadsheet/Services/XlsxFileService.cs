@@ -77,14 +77,14 @@ namespace OslSpreadsheet.Services
 
             // Load styles.xml to detect date-formatted cells and read each cell format's number format code
             var dateXfIndices = new HashSet<int>();
-            var xfFormatCodes = new Dictionary<int, string>();
+            var xfStyles = new Dictionary<int, CellStyle>();
             var stylesEntry = archive.GetEntry("xl/styles.xml");
             if (stylesEntry != null)
             {
                 using var stylesStream = stylesEntry.Open();
                 var stylesDoc = await Task.Run(() => XDocument.Load(stylesStream));
                 dateXfIndices = GetDateXfIndices(stylesDoc, mainNs);
-                xfFormatCodes = GetXfFormatCodes(stylesDoc, mainNs);
+                xfStyles = GetXfStyles(stylesDoc, mainNs, GetXfFormatCodes(stylesDoc, mainNs));
             }
 
             // Load workbook.xml
@@ -122,6 +122,17 @@ namespace OslSpreadsheet.Services
                 XDocument sheetDoc;
                 using (var sheetStream = sheetEntry.Open())
                     sheetDoc = await Task.Run(() => XDocument.Load(sheetStream, LoadOptions.PreserveWhitespace));
+
+                // Column widths: only columns with an explicit custom width are imported
+                foreach (var colEl in sheetDoc.Descendants(mainNs + "col"))
+                {
+                    var custom = colEl.Attribute("customWidth")?.Value;
+                    if (custom is not ("1" or "true")) continue;
+                    if (!int.TryParse(colEl.Attribute("min")?.Value, out int min) || !int.TryParse(colEl.Attribute("max")?.Value, out int max)) continue;
+                    if (!double.TryParse(colEl.Attribute("width")?.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double width)) continue;
+                    for (int c = Math.Max(1, min); c <= Math.Min(max, min + MaxImportedWidthColumns - 1); c++)
+                        sheet.SetColumnWidth(c, width);
+                }
 
                 var pane = sheetDoc.Descendants(mainNs + "pane").FirstOrDefault();
                 if (pane?.Attribute("state")?.Value == "frozen")
@@ -190,9 +201,14 @@ namespace OslSpreadsheet.Services
                         oCell.ValueType = valueType;
                         oCell.Formula = ReadFormula(cellEl.Element(mainNs + "f"), rowNum, colNum, sharedFormulas);
 
-                        if (int.TryParse(cellEl.Attribute("s")?.Value, out int xfIndex) && xfFormatCodes.TryGetValue(xfIndex, out var formatCode)
-                            && !IsDefaultFormat(formatCode, valueType))
-                            oCell.Style = new CellStyle { NumberFormat = formatCode };
+                        if (int.TryParse(cellEl.Attribute("s")?.Value, out int xfIndex) && xfStyles.TryGetValue(xfIndex, out var xfStyle))
+                        {
+                            var style = xfStyle.Clone();
+                            if (style.NumberFormat != null && IsDefaultFormat(style.NumberFormat, valueType))
+                                style.NumberFormat = null;
+                            if (!style.IsDefault)
+                                oCell.Style = style;
+                        }
                     }
                 }
 
@@ -467,6 +483,95 @@ namespace OslSpreadsheet.Services
                     result[i] = code;
             }
             return result;
+        }
+
+        // A <col> range can span the whole sheet (LibreOffice writes min="1" max="1024"); cap how many widths one range sets
+        private const int MaxImportedWidthColumns = 1024;
+
+        /// <summary>
+        /// Builds a CellStyle for each cellXfs entry from its font, fill, border, alignment, and number format.
+        /// Entries that resolve to the default style are omitted. Values matching the workbook's default font
+        /// (fonts[0]) are treated as unset so a round-trip doesn't invent FontName/FontSize.
+        /// </summary>
+        private static Dictionary<int, CellStyle> GetXfStyles(XDocument stylesDoc, XNamespace ns, Dictionary<int, string> xfFormatCodes)
+        {
+            var fonts = stylesDoc.Descendants(ns + "fonts").Elements(ns + "font").ToList();
+            var fills = stylesDoc.Descendants(ns + "fills").Elements(ns + "fill").ToList();
+            var borders = stylesDoc.Descendants(ns + "borders").Elements(ns + "border").ToList();
+            var xfs = stylesDoc.Descendants(ns + "cellXfs").Elements(ns + "xf").ToList();
+
+            var defaultFontName = fonts.Count > 0 ? fonts[0].Element(ns + "name")?.Attribute("val")?.Value : null;
+            var defaultFontSize = fonts.Count > 0 ? fonts[0].Element(ns + "sz")?.Attribute("val")?.Value : null;
+
+            var result = new Dictionary<int, CellStyle>();
+            for (int i = 0; i < xfs.Count; i++)
+            {
+                var xf = xfs[i];
+                var style = new CellStyle();
+
+                if (int.TryParse(xf.Attribute("fontId")?.Value, out int fontId) && fontId > 0 && fontId < fonts.Count)
+                {
+                    var font = fonts[fontId];
+                    style.Bold = font.Element(ns + "b") is XElement b && b.Attribute("val")?.Value is not ("0" or "false");
+                    style.Italic = font.Element(ns + "i") is XElement it && it.Attribute("val")?.Value is not ("0" or "false");
+                    style.Underline = font.Element(ns + "u") is XElement u && u.Attribute("val")?.Value is not ("none" or "0" or "false");
+                    style.FontColor = ReadRgb(font.Element(ns + "color"));
+                    var name = font.Element(ns + "name")?.Attribute("val")?.Value;
+                    if (name != null && name != defaultFontName) style.FontName = name;
+                    var size = font.Element(ns + "sz")?.Attribute("val")?.Value;
+                    if (size != null && size != defaultFontSize && double.TryParse(size, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double sz))
+                        style.FontSize = sz;
+                }
+
+                if (int.TryParse(xf.Attribute("fillId")?.Value, out int fillId) && fillId > 1 && fillId < fills.Count)
+                {
+                    var pattern = fills[fillId].Element(ns + "patternFill");
+                    if (pattern?.Attribute("patternType")?.Value == "solid")
+                        style.BackgroundColor = ReadRgb(pattern.Element(ns + "fgColor"));
+                }
+
+                if (int.TryParse(xf.Attribute("borderId")?.Value, out int borderId) && borderId > 0 && borderId < borders.Count)
+                {
+                    var border = borders[borderId];
+                    style.BorderTop = ReadBorderEdge(border.Element(ns + "top"), ns);
+                    style.BorderBottom = ReadBorderEdge(border.Element(ns + "bottom"), ns);
+                    style.BorderLeft = ReadBorderEdge(border.Element(ns + "left"), ns);
+                    style.BorderRight = ReadBorderEdge(border.Element(ns + "right"), ns);
+                }
+
+                style.WrapText = xf.Element(ns + "alignment")?.Attribute("wrapText")?.Value is "1" or "true";
+
+                if (xfFormatCodes.TryGetValue(i, out var code))
+                    style.NumberFormat = code;
+
+                if (!style.IsDefault)
+                    result[i] = style;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Reads an ARGB color attribute as "#RRGGBB". Theme and indexed colors have no fixed value and are ignored.
+        /// </summary>
+        private static string? ReadRgb(XElement? color)
+        {
+            var rgb = color?.Attribute("rgb")?.Value;
+            if (rgb == null || rgb.Length < 6) return null;
+            return "#" + rgb[^6..].ToUpperInvariant();
+        }
+
+        private static CellBorder? ReadBorderEdge(XElement? edge, XNamespace ns)
+        {
+            var styleName = edge?.Attribute("style")?.Value;
+            if (styleName == null || styleName == "none") return null;
+            var style = styleName switch
+            {
+                "thin" or "hair" or "dotted" or "dashed" => BorderStyle.Thin,
+                "medium" or "mediumDashed" or "mediumDashDot" or "mediumDashDotDot" or "double" => BorderStyle.Medium,
+                "thick" => BorderStyle.Thick,
+                _ => BorderStyle.Thin
+            };
+            return new CellBorder { Style = style, Color = ReadRgb(edge!.Element(ns + "color")) };
         }
 
         /// <summary>

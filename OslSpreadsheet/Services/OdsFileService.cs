@@ -100,12 +100,39 @@ namespace OslSpreadsheet.Services
             XNamespace officeNs = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
             XNamespace textNs   = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 
-            var cellFormatCodes = await ReadCellFormatCodesAsync(doc, archive);
+            var cellStyles = await ReadCellStylesAsync(doc, archive);
+            var columnWidths = ReadColumnWidths(doc);
 
             foreach (var table in doc.Descendants(tableNs + "table"))
             {
                 var sheetName = table.Attribute(tableNs + "name")?.Value ?? "Sheet";
                 var sheet = workbook.AddSheet(sheetName);
+
+                // Walk the column declarations (which may be nested in header/group wrappers) in order, collecting
+                // widths and each column's default cell style, which applications use instead of styling every cell.
+                // A trailing repeated declaration is filler for the unused columns and is skipped.
+                var columnDefaultStyles = new Dictionary<int, string>();
+                var columns = table.Descendants(tableNs + "table-column").ToList();
+                int columnIndex = 0;
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    var column = columns[i];
+                    int repeated = int.TryParse(column.Attribute(tableNs + "number-columns-repeated")?.Value, out int cr) ? cr : 1;
+                    bool trailingFiller = i == columns.Count - 1 && repeated > 1;
+                    int last = Math.Min(columnIndex + repeated, columnIndex + MaxImportedWidthColumns);
+
+                    var columnStyle = column.Attribute(tableNs + "style-name")?.Value;
+                    if (!trailingFiller && columnStyle != null && columnWidths.TryGetValue(columnStyle, out double width))
+                        for (int c = columnIndex + 1; c <= last; c++)
+                            sheet.SetColumnWidth(c, width);
+
+                    var defaultCellStyle = column.Attribute(tableNs + "default-cell-style-name")?.Value;
+                    if (!trailingFiller && defaultCellStyle != null && cellStyles.ContainsKey(defaultCellStyle))
+                        for (int c = columnIndex + 1; c <= last; c++)
+                            columnDefaultStyles[c] = defaultCellStyle;
+
+                    columnIndex += repeated;
+                }
 
                 int rowIndex = 0;
 
@@ -190,8 +217,16 @@ namespace OslSpreadsheet.Services
                             var oCell = sheet.AddCell(rowIndex, col, value);
                             oCell.ValueType = type;
                             oCell.Formula = formula;
-                            if (styleName != null && cellFormatCodes.TryGetValue(styleName, out var formatCode) && !IsDefaultFormat(formatCode, type))
-                                oCell.Style = new CellStyle { NumberFormat = formatCode };
+                            var effectiveStyleName = styleName ?? (columnDefaultStyles.TryGetValue(col, out var columnDefault) ? columnDefault : null);
+
+                            if (effectiveStyleName != null && cellStyles.TryGetValue(effectiveStyleName, out var cellStyle))
+                            {
+                                var style = cellStyle.Clone();
+                                if (style.NumberFormat != null && IsDefaultFormat(style.NumberFormat, type))
+                                    style.NumberFormat = null;
+                                if (!style.IsDefault)
+                                    oCell.Style = style;
+                            }
                         }
                     }
                 }
@@ -669,14 +704,57 @@ namespace OslSpreadsheet.Services
             return result;
         }
 
+        // A column declaration can repeat for the whole sheet (LibreOffice writes 1024 or more); cap how many widths one sets
+        private const int MaxImportedWidthColumns = 1024;
+
         /// <summary>
-        /// Maps each table-cell style name to the Excel format code of its data style. Styles with no translatable
-        /// data style are omitted. Data styles may live in content.xml or styles.xml.
+        /// Maps each table-column style name to its width in characters. The library's own default column width is skipped
+        /// so a round-trip of a sheet with no explicit widths leaves ColumnWidths empty.
         /// </summary>
-        private static async Task<Dictionary<string, string>> ReadCellFormatCodesAsync(XDocument contentDoc, ZipArchive archive)
+        private static Dictionary<string, double> ReadColumnWidths(XDocument contentDoc)
+        {
+            XNamespace styleNs = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
+            var result = new Dictionary<string, double>();
+
+            foreach (var style in contentDoc.Descendants(styleNs + "style").Where(s => (string?)s.Attribute(styleNs + "family") == "table-column"))
+            {
+                var name = (string?)style.Attribute(styleNs + "name");
+                var widthText = (string?)style.Element(styleNs + "table-column-properties")?.Attribute(styleNs + "column-width");
+                if (name == null || widthText == null) continue;
+
+                var cm = ParseLengthCm(widthText);
+                if (cm == null) continue;
+
+                var chars = Math.Round(cm.Value * (8.43 / 1.69333333333333), 2);
+                if (Math.Abs(chars - 8.43) < 0.01) continue; // the library's default column
+
+                result[name] = chars;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Parses an ODF length ("1.69cm", "0.5in", "12pt", "20mm") to centimeters.
+        /// </summary>
+        private static double? ParseLengthCm(string text)
+        {
+            var units = new (string Unit, double ToCm)[] { ("cm", 1), ("mm", 0.1), ("in", 2.54), ("pt", 2.54 / 72), ("pc", 2.54 / 6) };
+            foreach (var (unit, toCm) in units)
+                if (text.EndsWith(unit, StringComparison.Ordinal)
+                    && double.TryParse(text[..^unit.Length], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value))
+                    return value * toCm;
+            return null;
+        }
+
+        /// <summary>
+        /// Builds a CellStyle for each table-cell automatic style from its text properties, cell properties, and data style.
+        /// Styles that resolve to the default are omitted. Data styles may live in content.xml or styles.xml.
+        /// </summary>
+        private static async Task<Dictionary<string, CellStyle>> ReadCellStylesAsync(XDocument contentDoc, ZipArchive archive)
         {
             XNamespace styleNs = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
             XNamespace numberNs = "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0";
+            XNamespace foNs = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 
             var dataStyles = new Dictionary<string, XElement>();
             void CollectDataStyles(XDocument document)
@@ -694,17 +772,77 @@ namespace OslSpreadsheet.Services
                 CollectDataStyles(await Task.Run(() => XDocument.Load(stylesStream, LoadOptions.PreserveWhitespace)));
             }
 
-            var result = new Dictionary<string, string>();
+            var result = new Dictionary<string, CellStyle>();
             foreach (var cellStyle in contentDoc.Descendants(styleNs + "style").Where(s => (string?)s.Attribute(styleNs + "family") == "table-cell"))
             {
                 var name = (string?)cellStyle.Attribute(styleNs + "name");
-                var dataStyleName = (string?)cellStyle.Attribute(styleNs + "data-style-name");
-                if (name == null || dataStyleName == null || !dataStyles.TryGetValue(dataStyleName, out var dataStyle)) continue;
+                if (name == null) continue;
 
-                if (NumberFormatTranslator.FromOdsDataStyle(dataStyle) is string code)
-                    result[name] = code;
+                var style = new CellStyle();
+
+                var text = cellStyle.Element(styleNs + "text-properties");
+                if (text != null)
+                {
+                    style.Bold = (string?)text.Attribute(foNs + "font-weight") == "bold";
+                    style.Italic = (string?)text.Attribute(foNs + "font-style") == "italic";
+                    style.Underline = (string?)text.Attribute(styleNs + "text-underline-style") is string u && u != "none";
+                    style.FontColor = NormalizeColor((string?)text.Attribute(foNs + "color"));
+                    style.FontName = (string?)text.Attribute(styleNs + "font-name");
+                    var size = (string?)text.Attribute(foNs + "font-size");
+                    if (size != null && size.EndsWith("pt", StringComparison.Ordinal)
+                        && double.TryParse(size[..^2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double pt))
+                        style.FontSize = pt;
+                }
+
+                var cellProps = cellStyle.Element(styleNs + "table-cell-properties");
+                if (cellProps != null)
+                {
+                    style.BackgroundColor = NormalizeColor((string?)cellProps.Attribute(foNs + "background-color"));
+                    style.WrapText = (string?)cellProps.Attribute(foNs + "wrap-option") == "wrap";
+
+                    // fo:border applies to all four sides unless a side-specific attribute overrides it
+                    var all = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border"));
+                    style.BorderTop = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border-top")) ?? all?.Clone();
+                    style.BorderBottom = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border-bottom")) ?? all?.Clone();
+                    style.BorderLeft = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border-left")) ?? all?.Clone();
+                    style.BorderRight = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border-right")) ?? all?.Clone();
+                }
+
+                var dataStyleName = (string?)cellStyle.Attribute(styleNs + "data-style-name");
+                if (dataStyleName != null && dataStyles.TryGetValue(dataStyleName, out var dataStyle)
+                    && NumberFormatTranslator.FromOdsDataStyle(dataStyle) is string code)
+                    style.NumberFormat = code;
+
+                if (!style.IsDefault)
+                    result[name] = style;
             }
             return result;
+        }
+
+        /// <summary>
+        /// Returns a "#RRGGBB" color, or null for "transparent" and anything that isn't a hex color.
+        /// </summary>
+        private static string? NormalizeColor(string? color) =>
+            color != null && color.StartsWith('#') && color.Length == 7 ? color.ToUpperInvariant() : null;
+
+        /// <summary>
+        /// Parses an ODF border such as "0.75pt solid #000000". Returns null for "none" or an unparseable value.
+        /// </summary>
+        private static CellBorder? ParseOdsBorder(string? border)
+        {
+            if (string.IsNullOrEmpty(border) || border == "none") return null;
+
+            var parts = border.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var widthCm = parts.Select(ParseLengthCm).FirstOrDefault(w => w != null);
+            var widthPt = (widthCm ?? 0) / 2.54 * 72;
+            var style = widthPt switch
+            {
+                <= 1.0 => BorderStyle.Thin,
+                <= 2.0 => BorderStyle.Medium,
+                _ => BorderStyle.Thick
+            };
+
+            return new CellBorder { Style = style, Color = parts.Select(NormalizeColor).FirstOrDefault(c => c != null) };
         }
 
         /// <summary>

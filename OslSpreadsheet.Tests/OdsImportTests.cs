@@ -20,7 +20,8 @@ public class OdsImportTests
             "<office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" " +
             "xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" " +
             "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" office:version=\"1.3\">" +
-            "<office:body><office:spreadsheet>" + spreadsheetBody + "</office:spreadsheet></office:body>" +
+            SplitStyles(spreadsheetBody, out var body) +
+            "<office:body><office:spreadsheet>" + body + "</office:spreadsheet></office:body>" +
             "</office:document-content>";
 
         var manifest =
@@ -45,6 +46,22 @@ public class OdsImportTests
             Add("content.xml", content, CompressionLevel.Fastest);
         }
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Lets a test body start with an office:automatic-styles element, which belongs before office:body.
+    /// </summary>
+    private static string SplitStyles(string spreadsheetBody, out string body)
+    {
+        const string end = "</office:automatic-styles>";
+        var idx = spreadsheetBody.IndexOf(end, StringComparison.Ordinal);
+        if (!spreadsheetBody.StartsWith("<office:automatic-styles", StringComparison.Ordinal) || idx < 0)
+        {
+            body = spreadsheetBody;
+            return "";
+        }
+        body = spreadsheetBody[(idx + end.Length)..];
+        return spreadsheetBody[..(idx + end.Length)];
     }
 
     private static string StringCell(string value) =>
@@ -181,6 +198,42 @@ public class OdsImportTests
         Assert.Equal("line one\nline two", cells[0].Value);
         Assert.Equal("  padded ", cells[1].Value);
         Assert.Equal("a\tb\nc bold", cells[2].Value);
+    }
+
+    /// <summary>
+    /// Cells without their own style take the column's default cell style, which LibreOffice uses when a whole column is formatted.
+    /// Column widths are read, and the trailing filler column declaration is ignored.
+    /// </summary>
+    [Fact]
+    public async Task Import_ColumnDefaultCellStyleAndWidths()
+    {
+        var ods = BuildOds(
+            "<office:automatic-styles xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\">" +
+            "<style:style style:name=\"co1\" style:family=\"table-column\"><style:table-column-properties style:column-width=\"5.08cm\"/></style:style>" +
+            "<style:style style:name=\"co2\" style:family=\"table-column\"><style:table-column-properties style:column-width=\"2.258cm\"/></style:style>" +
+            "<style:style style:name=\"ce1\" style:family=\"table-cell\"><style:table-cell-properties fo:background-color=\"#ffff00\" fo:border-bottom=\"1.76pt solid #1565c0\"/>" +
+            "<style:text-properties fo:font-weight=\"bold\" fo:color=\"#ff0000\"/></style:style>" +
+            "</office:automatic-styles>" +
+            "<table:table table:name=\"Data\">" +
+            "<table:table-column table:style-name=\"co1\" table:default-cell-style-name=\"ce1\"/>" +
+            "<table:table-column table:style-name=\"co2\" table:number-columns-repeated=\"16383\"/>" +
+            Row("Header", "plain") +
+            "</table:table>");
+
+        using var spreadsheet = new Spreadsheet();
+        var sheet = (await spreadsheet.ImportOdsFileAsync(ods)).Sheets[0];
+
+        var styled = sheet.GetCell(1, 1)?.Style;
+        Assert.NotNull(styled);
+        Assert.True(styled.Bold);
+        Assert.Equal("#FF0000", styled.FontColor);
+        Assert.Equal("#FFFF00", styled.BackgroundColor);
+        Assert.Equal(OslSpreadsheet.Models.BorderStyle.Medium, styled.BorderBottom?.Style);
+        Assert.Equal("#1565C0", styled.BorderBottom?.Color);
+        Assert.Null(sheet.GetCell(1, 2)?.Style);
+
+        Assert.Equal(25.29, sheet.ColumnWidths[1], 1);
+        Assert.Single(sheet.ColumnWidths);
     }
 
     /// <summary>

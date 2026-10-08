@@ -16,9 +16,9 @@ A .NET library for reading and creating spreadsheet files in ODS, XLSX, and deli
 
 - **Multi-sheet workbooks** — create and import workbooks with multiple named sheets
 - **Cell value types** — String, Float, Boolean, DateTime, and Int64
-- **Cell styling** — bold, italic, underline, font color/name/size, background color, borders (thin/medium/thick with color per edge), and text wrapping. Applied when generating XLSX and ODS; not read on import
+- **Cell styling** — bold, italic, underline, font color/name/size, background color, borders (thin/medium/thick with color per edge), and text wrapping. Written and read back for both XLSX and ODS
 - **Number formats** — `CellStyle.NumberFormat` takes an Excel format code (`#,##0.00`, `0%`, `"$"#,##0.00`, `mmm d, yyyy`, `h:mm AM/PM`, ...). Written to XLSX as-is and translated to ODS data styles; read back on import from both formats
-- **Column widths** — manual `SetColumnWidth()` or automatic `AutoFitColumns()` with min/max constraints. Applied when generating XLSX and ODS; not read on import
+- **Column widths** — manual `SetColumnWidth()` or automatic `AutoFitColumns()` with min/max constraints. Written and read back for both XLSX and ODS
 - **Freeze panes** — freeze rows and/or columns with `FreezeRows` and `FreezeColumns`
 - **Auto-filters** — `SetAutoFilter()` for the full range or a custom range
 - **Header row detection** — `HasHeaderRow`, `HeaderNames`, and `GetColumn(string)` for column-name-based access. Auto-detected on XLSX/ODS import when freeze panes or auto-filters are present

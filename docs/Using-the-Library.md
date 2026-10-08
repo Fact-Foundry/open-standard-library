@@ -46,6 +46,8 @@ The array is sized to the sheet's row and column counts. Positions with no cell 
 
 Cells support styling including bold, italic, underline, font color, background color, font name, font size, text wrapping, and borders (thin/medium/thick with color per edge). Styles are applied via the `CellStyle` class on `oCell.Style`.
 
+Styles are read back on import from both XLSX and ODS, so a file can be imported, changed, and generated again without losing its formatting. Only the properties `CellStyle` models are kept; alignment, fonts chosen by theme, and other formatting the library doesn't write are dropped. Cells whose formatting comes from a column default (common in files saved by LibreOffice) get it as their own `Style`. A cell with no formatting imports with `Style` null, and `CellStyle.IsDefault` tells you whether a style has any effect. ODS always stores a border color, so a border written without one comes back from an ODS file with `Color = "#000000"`.
+
 ## Number Formats
 
 `CellStyle.NumberFormat` takes an Excel format code and controls how a number or date is displayed:

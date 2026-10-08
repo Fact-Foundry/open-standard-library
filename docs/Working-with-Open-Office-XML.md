@@ -59,9 +59,8 @@ XLSX import supports:
 - Freeze panes
 - Auto filters, and header row detection from freeze panes or auto filters
 - Formulas, along with any cached results stored in the file
-- Number formats
-
-Other cell styles and column widths are not read on import.
+- Cell styling and number formats
+- Column widths (explicitly set columns only)
 
 Formulas are written in Excel syntax (`=SUM(A1:A10)`), and the workbook is flagged to recalculate when opened. The library does not calculate formulas, so generated files contain no cached results unless you set the cell's `Value`. Excel and LibreOffice calculate on open; tools that only read stored values (such as pandas or file previewers) show those cells as empty.
 
