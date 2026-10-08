@@ -1,0 +1,121 @@
+using System.IO.Compression;
+using System.Text;
+using OoxSpreadsheet;
+using Xunit;
+
+namespace OslSpreadsheet.Tests;
+
+/// <summary>
+/// Tests that ODS import handles structures written by LibreOffice and other applications that the library itself doesn't generate.
+/// </summary>
+public class OdsImportTests
+{
+    /// <summary>
+    /// Builds a minimal ODS package around the given table XML (the content of an office:spreadsheet element).
+    /// </summary>
+    private static byte[] BuildOds(string spreadsheetBody)
+    {
+        var content =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
+            "<office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" " +
+            "xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" " +
+            "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" office:version=\"1.3\">" +
+            "<office:body><office:spreadsheet>" + spreadsheetBody + "</office:spreadsheet></office:body>" +
+            "</office:document-content>";
+
+        var manifest =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
+            "<manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\" manifest:version=\"1.3\">" +
+            "<manifest:file-entry manifest:full-path=\"/\" manifest:media-type=\"application/vnd.oasis.opendocument.spreadsheet\"/>" +
+            "<manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/>" +
+            "</manifest:manifest>";
+
+        using var ms = new MemoryStream();
+        using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+        {
+            void Add(string name, string text, CompressionLevel level)
+            {
+                using var stream = archive.CreateEntry(name, level).Open();
+                var bytes = Encoding.UTF8.GetBytes(text);
+                stream.Write(bytes, 0, bytes.Length);
+            }
+
+            Add("mimetype", "application/vnd.oasis.opendocument.spreadsheet", CompressionLevel.NoCompression);
+            Add("META-INF/manifest.xml", manifest, CompressionLevel.Fastest);
+            Add("content.xml", content, CompressionLevel.Fastest);
+        }
+        return ms.ToArray();
+    }
+
+    private static string StringCell(string value) =>
+        $"<table:table-cell office:value-type=\"string\"><text:p>{value}</text:p></table:table-cell>";
+
+    private static string Row(params string[] values) =>
+        "<table:table-row>" + string.Concat(values.Select(StringCell)) + "</table:table-row>";
+
+    /// <summary>
+    /// Imports the package and returns the first sheet's values as (row, column, value) tuples in order.
+    /// </summary>
+    private static async Task<List<(int Row, int Col, string Value)>> ImportAsync(byte[] ods)
+    {
+        using var spreadsheet = new Spreadsheet();
+        var workbook = await spreadsheet.ImportOdsFileAsync(ods);
+        return workbook.Sheets[0].Cells.OrderBy(c => c.Row).ThenBy(c => c.Column).Select(c => (c.Row, c.Column, c.Value)).ToList();
+    }
+
+    /// <summary>
+    /// Rows wrapped in table:table-header-rows (written by LibreOffice when rows are set to repeat on each printed page) are imported in order.
+    /// </summary>
+    [Fact]
+    public async Task Import_ReadsRowsInsideHeaderRows()
+    {
+        var ods = BuildOds(
+            "<table:table table:name=\"Data\">" +
+            "<table:table-header-rows>" + Row("Name", "Score") + "</table:table-header-rows>" +
+            Row("Alice", "95") +
+            "</table:table>");
+
+        var cells = await ImportAsync(ods);
+
+        Assert.Equal(new[] { (1, 1, "Name"), (1, 2, "Score"), (2, 1, "Alice"), (2, 2, "95") }, cells);
+    }
+
+    /// <summary>
+    /// Rows inside table:table-row-group (outline groups), including nested groups and table:table-rows wrappers, are imported in document order.
+    /// </summary>
+    [Fact]
+    public async Task Import_ReadsRowsInsideNestedRowGroups()
+    {
+        var ods = BuildOds(
+            "<table:table table:name=\"Data\">" +
+            Row("r1") +
+            "<table:table-row-group>" +
+                Row("r2") +
+                "<table:table-row-group>" + "<table:table-rows>" + Row("r3") + "</table:table-rows>" + "</table:table-row-group>" +
+                Row("r4") +
+            "</table:table-row-group>" +
+            Row("r5") +
+            "</table:table>");
+
+        var cells = await ImportAsync(ods);
+
+        Assert.Equal(new[] { (1, 1, "r1"), (2, 1, "r2"), (3, 1, "r3"), (4, 1, "r4"), (5, 1, "r5") }, cells);
+    }
+
+    /// <summary>
+    /// A repeated row inside a header-rows wrapper still advances the row index by its repeat count.
+    /// </summary>
+    [Fact]
+    public async Task Import_RepeatedRowInsideHeaderRows_AdvancesRowIndex()
+    {
+        var ods = BuildOds(
+            "<table:table table:name=\"Data\">" +
+            "<table:table-header-rows><table:table-row table:number-rows-repeated=\"2\">" + StringCell("h") + "</table:table-row></table:table-header-rows>" +
+            Row("data") +
+            "</table:table>");
+
+        var cells = await ImportAsync(ods);
+
+        Assert.Equal(new[] { (1, 1, "h"), (2, 1, "h"), (3, 1, "data") }, cells);
+    }
+}

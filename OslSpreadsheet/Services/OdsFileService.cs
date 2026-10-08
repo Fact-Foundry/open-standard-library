@@ -107,7 +107,7 @@ namespace OslSpreadsheet.Services
 
                 int rowIndex = 0;
 
-                foreach (var tableRow in table.Elements(tableNs + "table-row"))
+                foreach (var tableRow in GetTableRows(table, tableNs))
                 {
                     int rowsRepeated = int.TryParse(tableRow.Attribute(tableNs + "number-rows-repeated")?.Value, out int rr) ? rr : 1;
 
@@ -626,6 +626,22 @@ namespace OslSpreadsheet.Services
                 col /= 26;
             }
             return result;
+        }
+
+        /// <summary>
+        /// Returns a table's rows in document order, including rows nested inside
+        /// table-header-rows, table-rows, and table-row-group containers (which may themselves be nested).
+        /// </summary>
+        private static IEnumerable<XElement> GetTableRows(XElement container, XNamespace tableNs)
+        {
+            foreach (var child in container.Elements())
+            {
+                if (child.Name == tableNs + "table-row")
+                    yield return child;
+                else if (child.Name == tableNs + "table-header-rows" || child.Name == tableNs + "table-rows" || child.Name == tableNs + "table-row-group")
+                    foreach (var row in GetTableRows(child, tableNs))
+                        yield return row;
+            }
         }
 
         private static (string sheetName, int row, int col) ParseOdsCellAddress(string address)
