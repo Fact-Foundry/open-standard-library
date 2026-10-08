@@ -34,7 +34,7 @@ namespace OslSpreadsheet.Services
                 files.Add(new InMemoryFile
                 {
                     FileName = $"xl/worksheets/sheet{sheet.Index}.xml",
-                    Content = BuildWorksheet(sheet, styleIndexMap)
+                    Content = BuildWorksheet(sheet, styleIndexMap, isActiveSheet: sheet == workbook.Sheets[0])
                 });
             }
 
@@ -501,7 +501,7 @@ namespace OslSpreadsheet.Services
             return $"<{edge} style=\"{style}\"/>";
         }
 
-        private static byte[] BuildWorksheet(oSpreadsheet sheet, Dictionary<string, int> styleIndexMap)
+        private static byte[] BuildWorksheet(oSpreadsheet sheet, Dictionary<string, int> styleIndexMap, bool isActiveSheet)
         {
             var sb = new StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
@@ -510,7 +510,8 @@ namespace OslSpreadsheet.Services
             if (sheet.FreezeRows > 0 || sheet.FreezeColumns > 0)
             {
                 var topLeftCell = $"{ColumnLetter(sheet.FreezeColumns + 1)}{sheet.FreezeRows + 1}";
-                sb.Append("<sheetViews><sheetView tabSelected=\"1\" workbookViewId=\"0\">");
+                // Only one sheet may be selected; Excel treats multiple selected sheets as a group and applies edits to all of them
+                sb.Append(isActiveSheet ? "<sheetViews><sheetView tabSelected=\"1\" workbookViewId=\"0\">" : "<sheetViews><sheetView workbookViewId=\"0\">");
                 sb.Append($"<pane");
                 if (sheet.FreezeColumns > 0) sb.Append($" xSplit=\"{sheet.FreezeColumns}\"");
                 if (sheet.FreezeRows > 0) sb.Append($" ySplit=\"{sheet.FreezeRows}\"");
@@ -562,7 +563,7 @@ namespace OslSpreadsheet.Services
                     else if (cell.ValueType == CellValueType.Boolean)
                         sb.Append($"<c r=\"{cellRef}\"{styleAttr} t=\"b\"><v>{(cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "1" : "0")}</v></c>");
                     else
-                        sb.Append($"<c r=\"{cellRef}\"{styleAttr} t=\"inlineStr\"><is><t>{SecurityElement.Escape(cell.Value)}</t></is></c>");
+                        sb.Append($"<c r=\"{cellRef}\"{styleAttr} t=\"inlineStr\"><is><t xml:space=\"preserve\">{SecurityElement.Escape(cell.Value)}</t></is></c>");
                 }
                 sb.Append("</row>");
             }
