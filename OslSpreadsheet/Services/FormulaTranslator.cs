@@ -105,6 +105,113 @@ namespace OslSpreadsheet.Services
         }
 
         /// <summary>
+        /// Functions that reach outside the spreadsheet: fetch URLs, open links, run code, or pull from other processes.
+        /// A formula calling one of these in a file from an untrusted source is a data-exfiltration or code-execution risk.
+        /// </summary>
+        private static readonly HashSet<string> DangerousFunctions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "WEBSERVICE", "FILTERXML", "HYPERLINK", "RTD", "DDE", "CALL", "REGISTER", "REGISTER.ID", "EXEC", "EVALUATE",
+            "IMPORTXML", "IMPORTDATA", "IMPORTHTML", "IMPORTFEED", "IMPORTRANGE", "IMAGE", "ENCODEURL"
+        };
+
+        /// <summary>
+        /// Returns a short description of why an Excel formula is dangerous, or null if nothing suspicious was found.
+        /// Detects calls to <see cref="DangerousFunctions"/> and Excel's DDE syntax (<c>=cmd|'/c calc'!A0</c>).
+        /// String literals are ignored, so <c>="WEBSERVICE("</c> is not flagged.
+        /// </summary>
+        internal static string? FindDangerousConstruct(string formula)
+        {
+            var body = Normalize(formula) ?? "";
+            int i = 0;
+            while (i < body.Length)
+            {
+                var c = body[i];
+                if (c == '"')
+                {
+                    i = SkipStringLiteral(body, i);
+                    continue;
+                }
+                if (c == '\'')
+                {
+                    i = SkipQuotedSheetName(body, i);
+                    continue;
+                }
+
+                if (c == '|')
+                    return "uses DDE syntax (application|topic!item), which launches another program";
+
+                if (char.IsAsciiLetter(c) || c == '_')
+                {
+                    int start = i;
+                    while (i < body.Length && (char.IsAsciiLetterOrDigit(body[i]) || body[i] is '_' or '.')) i++;
+                    int j = i;
+                    while (j < body.Length && body[j] == ' ') j++;
+                    if (j < body.Length && body[j] == '(' && DangerousFunctions.Contains(body[start..i]))
+                        return $"calls {body[start..i].ToUpperInvariant()}(), which can {Describe(body[start..i])}";
+                    continue;
+                }
+                i++;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// True when the formula refers to another workbook, e.g. <c>[1]Sheet1!A1</c> or <c>'C:\path\[Book.xlsx]Sheet1'!A1</c>.
+        /// </summary>
+        internal static bool HasExternalReference(string formula)
+        {
+            var found = false;
+            RewriteExcel(Normalize(formula) ?? "", new StringBuilder(), text => text, reference =>
+            {
+                if (reference.External || (reference.Sheet != null && reference.Sheet.Contains('[')))
+                    found = true;
+                return "";
+            });
+            return found;
+        }
+
+        private static string Describe(string function) => function.ToUpperInvariant() switch
+        {
+            "WEBSERVICE" or "FILTERXML" or "IMPORTXML" or "IMPORTDATA" or "IMPORTHTML" or "IMPORTFEED" or "IMPORTRANGE" or "IMAGE"
+                => "fetch a URL and send cell contents to it",
+            "HYPERLINK" => "open an arbitrary link",
+            "RTD" or "DDE" => "pull data from another process",
+            "CALL" or "REGISTER" or "REGISTER.ID" or "EXEC" or "EVALUATE" => "run external code",
+            "ENCODEURL" => "prepare cell contents for sending to a URL",
+            _ => "reach outside the spreadsheet"
+        };
+
+        private static int SkipStringLiteral(string s, int start)
+        {
+            int i = start + 1;
+            while (i < s.Length)
+            {
+                if (s[i] == '"')
+                {
+                    if (i + 1 < s.Length && s[i + 1] == '"') { i += 2; continue; }
+                    return i + 1;
+                }
+                i++;
+            }
+            return i;
+        }
+
+        private static int SkipQuotedSheetName(string s, int start)
+        {
+            int i = start + 1;
+            while (i < s.Length)
+            {
+                if (s[i] == '\'')
+                {
+                    if (i + 1 < s.Length && s[i + 1] == '\'') { i += 2; continue; }
+                    return i + 1;
+                }
+                i++;
+            }
+            return i;
+        }
+
+        /// <summary>
         /// Shifts the relative parts of every reference in an Excel formula. Used to expand XLSX shared formulas,
         /// which store the formula once and apply it to other cells with relative references adjusted.
         /// </summary>

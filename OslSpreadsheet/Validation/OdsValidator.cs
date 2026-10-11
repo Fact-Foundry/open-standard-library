@@ -47,16 +47,18 @@ namespace OslSpreadsheet.Validation
 
         private readonly ZipPackage _package;
         private readonly IssueCollector _issues;
+        private readonly ValidationOptions _options;
         private readonly byte[] _file;
         private readonly HashSet<string> _styleNames = new(StringComparer.Ordinal);
         private readonly HashSet<string> _dataStyleNames = new(StringComparer.Ordinal);
         private readonly HashSet<string> _tableNames = new(StringComparer.OrdinalIgnoreCase);
 
-        private OdsValidator(byte[] file, ZipPackage package, IssueCollector issues)
+        private OdsValidator(byte[] file, ZipPackage package, IssueCollector issues, ValidationOptions options)
         {
             _file = file;
             _package = package;
             _issues = issues;
+            _options = options;
         }
 
         internal static void Validate(byte[] file, IssueCollector issues, ValidationOptions options)
@@ -72,7 +74,7 @@ namespace OslSpreadsheet.Validation
             if (package == null)
                 return;
 
-            new OdsValidator(file, package, issues).Run();
+            new OdsValidator(file, package, issues, options).Run();
         }
 
         private void Run()
@@ -439,6 +441,8 @@ namespace OslSpreadsheet.Validation
                     _issues.Error($"{Prefix}_FORMULA_UNKNOWN_SHEET",
                         $"The formula \"{XlsxValidator.Truncate(formula)}\" refers to sheet \"{missing}\", which does not exist in this document. Existing sheets: {string.Join(", ", _tableNames)}.",
                         part, location, sheet, cellName, row);
+            if (!string.IsNullOrEmpty(formula))
+                XlsxValidator.ReportDangerousFormula(_issues, _options, Prefix, Services.FormulaTranslator.FromOpenFormula(formula), part, location, sheet, cellName, row);
 
             if ((string?)cell.Attribute(CalcExtNs + "value-type") == "error")
             {

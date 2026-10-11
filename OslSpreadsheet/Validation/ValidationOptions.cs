@@ -33,5 +33,12 @@ namespace OslSpreadsheet.Validation
         /// When false, they are reported as warnings. Defaults to true.
         /// </summary>
         public bool RequireConsistentColumnCount { get; set; } = true;
+
+        /// <summary>
+        /// When true, formulas that call functions reaching outside the spreadsheet (WEBSERVICE, HYPERLINK, RTD, DDE,
+        /// CALL, ...) or use DDE syntax are reported as errors instead of warnings, so <see cref="ValidationResult.IsValid"/>
+        /// is false and generation refuses the workbook. Defaults to false. External workbook references are always warnings.
+        /// </summary>
+        public bool TreatDangerousFormulasAsErrors { get; set; }
     }
 }

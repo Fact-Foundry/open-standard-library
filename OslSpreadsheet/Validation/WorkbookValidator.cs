@@ -22,7 +22,7 @@ namespace OslSpreadsheet.Validation
 
             try
             {
-                Run(workbook, format, issues);
+                Run(workbook, format, issues, options);
             }
             catch (IssueLimitReachedException)
             {
@@ -32,7 +32,7 @@ namespace OslSpreadsheet.Validation
             return issues.ToResult(format, subject: "workbook");
         }
 
-        private static void Run(oWorkbook workbook, ValidationFileFormat format, IssueCollector issues)
+        private static void Run(oWorkbook workbook, ValidationFileFormat format, IssueCollector issues, ValidationOptions options)
         {
             if (workbook.Sheets.Count == 0)
             {
@@ -49,7 +49,7 @@ namespace OslSpreadsheet.Validation
                 ValidateSheetName(sheet, format, sheetNames, issues);
 
             foreach (var sheet in workbook.Sheets)
-                ValidateSheet(sheet, format, sheetNames, workbook, issues);
+                ValidateSheet(sheet, format, sheetNames, workbook, issues, options);
         }
 
         private static void ValidateSheetName(oSpreadsheet sheet, ValidationFileFormat format, HashSet<string> seen, IssueCollector issues)
@@ -76,7 +76,7 @@ namespace OslSpreadsheet.Validation
                 issues.Error($"{Prefix}_SHEET_NAME_DUPLICATE", $"Sheet name \"{name}\" is used more than once. Sheet names must be unique (case-insensitive).", sheet: name);
         }
 
-        private static void ValidateSheet(oSpreadsheet sheet, ValidationFileFormat format, HashSet<string> sheetNames, oWorkbook workbook, IssueCollector issues)
+        private static void ValidateSheet(oSpreadsheet sheet, ValidationFileFormat format, HashSet<string> sheetNames, oWorkbook workbook, IssueCollector issues, ValidationOptions options)
         {
             var name = sheet.SheetName;
 
@@ -89,10 +89,10 @@ namespace OslSpreadsheet.Validation
                     $"The auto-filter range (rows {sr}-{er}, columns {sc}-{ec}) is invalid. Start must be at least 1 and end must not be before start.", sheet: name);
 
             foreach (var cell in sheet.Cells)
-                ValidateCell(cell, name, format, sheetNames, workbook, issues);
+                ValidateCell(cell, name, format, sheetNames, workbook, issues, options);
         }
 
-        private static void ValidateCell(oCell cell, string sheetName, ValidationFileFormat format, HashSet<string> sheetNames, oWorkbook workbook, IssueCollector issues)
+        private static void ValidateCell(oCell cell, string sheetName, ValidationFileFormat format, HashSet<string> sheetNames, oWorkbook workbook, IssueCollector issues, ValidationOptions options)
         {
             var cellName = cell.Column >= 1 && cell.Column <= MaxColumns ? $"{XlsxValidator.ColumnName(cell.Column)}{cell.Row}" : $"R{cell.Row}C{cell.Column}";
             var location = $"{sheetName}!{cellName}";
@@ -187,6 +187,8 @@ namespace OslSpreadsheet.Validation
                 issues.Error($"{Prefix}_FORMULA_UNKNOWN_SHEET",
                     $"The formula \"{XlsxValidator.Truncate(formula)}\" refers to sheet \"{missing}\", which is not in the workbook. Existing sheets: {string.Join(", ", sheetNames)}.",
                     location: location, sheet: sheetName, cell: cellName, row: cell.Row);
+
+            XlsxValidator.ReportDangerousFormula(issues, options, Prefix, formula, null, location, sheetName, cellName, cell.Row);
         }
 
         /// <summary>

@@ -51,6 +51,12 @@
         public Validation.ValidationResult Validate(Validation.ValidationFileFormat format = Validation.ValidationFileFormat.Xlsx) =>
             Validation.WorkbookValidator.Validate(this, format);
 
+        /// <summary>
+        /// Checks the workbook with the given options, e.g. <see cref="Validation.ValidationOptions.TreatDangerousFormulasAsErrors"/>.
+        /// </summary>
+        public Validation.ValidationResult Validate(Validation.ValidationFileFormat format, Validation.ValidationOptions options) =>
+            Validation.WorkbookValidator.Validate(this, format, options);
+
         public oSpreadsheet AddSheet()
         {
             var index = _nextSheetIndex;

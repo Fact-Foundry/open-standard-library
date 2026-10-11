@@ -73,16 +73,18 @@ namespace OslSpreadsheet.Validation
 
         private readonly ZipPackage _package;
         private readonly IssueCollector _issues;
+        private readonly ValidationOptions _options;
         private readonly Dictionary<string, Dictionary<string, Relationship>> _relationships = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _defaultContentTypes = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _overrideContentTypes = new(StringComparer.OrdinalIgnoreCase);
         private XNamespace _ns = TransitionalNs;
         private readonly HashSet<string> _sheetNames = new(StringComparer.OrdinalIgnoreCase);
 
-        private XlsxValidator(ZipPackage package, IssueCollector issues)
+        private XlsxValidator(ZipPackage package, IssueCollector issues, ValidationOptions options)
         {
             _package = package;
             _issues = issues;
+            _options = options;
         }
 
         private sealed record Relationship(string Id, string Type, string Target, bool External, string? ResolvedPath, XElement Element)
@@ -106,7 +108,7 @@ namespace OslSpreadsheet.Validation
             if (package == null)
                 return;
 
-            new XlsxValidator(package, issues).Run();
+            new XlsxValidator(package, issues, options).Run();
         }
 
         private void Run()
@@ -816,6 +818,9 @@ namespace OslSpreadsheet.Validation
                         $"The formula \"{Truncate(formula)}\" refers to sheet \"{missing}\", which does not exist in this workbook. Existing sheets: {string.Join(", ", _sheetNames)}.",
                         part, location, sheet, cellName, row);
 
+            if (!string.IsNullOrEmpty(formula))
+                ReportDangerousFormula(formula, part, location, sheet, cellName, row);
+
             if (type != "inlineStr" && cell.Element(_ns + "is") != null)
                 _issues.Error($"{Prefix}_CELL_INLINE_STRING_TYPE",
                     $"The cell has an <is> inline string but t=\"{type}\". Inline strings require t=\"inlineStr\".", part, location, sheet, cellName, row);
@@ -1057,6 +1062,27 @@ namespace OslSpreadsheet.Validation
                     || TimeOnly.TryParseExact(value, ["HH:mm:ss", "HH:mm"], CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
             }
         }
+
+        /// <summary>
+        /// Reports formulas that reach outside the spreadsheet or into other workbooks. Shared by the XLSX and ODS validators.
+        /// </summary>
+        internal static void ReportDangerousFormula(IssueCollector issues, ValidationOptions options, string prefix, string excelFormula,
+            string? part, string? location, string? sheet, string? cell, int? row)
+        {
+            if (Services.FormulaTranslator.FindDangerousConstruct(excelFormula) is string reason)
+                issues.Add(options.TreatDangerousFormulasAsErrors ? ValidationSeverity.Error : ValidationSeverity.Warning,
+                    $"{prefix}_FORMULA_DANGEROUS",
+                    $"The formula \"{Truncate(excelFormula)}\" {reason}. In a file from an untrusted source this can leak data or run code when the file is opened.",
+                    part, location, sheet, cell, row);
+
+            if (Services.FormulaTranslator.HasExternalReference(excelFormula))
+                issues.Warning($"{prefix}_FORMULA_EXTERNAL_REFERENCE",
+                    $"The formula \"{Truncate(excelFormula)}\" refers to another workbook, so its result depends on a file outside this one.",
+                    part, location, sheet, cell, row);
+        }
+
+        private void ReportDangerousFormula(string formula, string part, string location, string sheet, string cellName, int row) =>
+            ReportDangerousFormula(_issues, _options, Prefix, Services.FormulaTranslator.FromXlsx(formula), part, location, sheet, cellName, row);
 
         /// <summary>
         /// Broken references (#REF!) and unknown names (#NAME?) indicate a malformed formula; other error values
