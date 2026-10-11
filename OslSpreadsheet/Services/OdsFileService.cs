@@ -602,7 +602,7 @@ namespace OslSpreadsheet.Services
                             style.textProperties.TextUnderlineStyle = "solid";
                             style.textProperties.TextUnderlineWidth = "auto";
                         }
-                        if (cs.FontColor != null) style.textProperties.Color = cs.FontColor;
+                        if (cs.FontColor != null) style.textProperties.Color = Colors.Normalize(cs.FontColor);
                         if (cs.FontName != null) style.textProperties.FontName = cs.FontName;
                         if (cs.FontSize != null) style.textProperties.FontSize = $"{cs.FontSize}pt";
                     }
@@ -610,7 +610,7 @@ namespace OslSpreadsheet.Services
                     if (cs.BackgroundColor != null || cs.BorderTop != null || cs.BorderBottom != null || cs.BorderLeft != null || cs.BorderRight != null || cs.WrapText)
                     {
                         style.tableCellProperties = new ODContent.AutomaticStyles.Style.TableCellStyleProperties();
-                        if (cs.BackgroundColor != null) style.tableCellProperties.BackgroundColor = cs.BackgroundColor;
+                        if (cs.BackgroundColor != null) style.tableCellProperties.BackgroundColor = Colors.Normalize(cs.BackgroundColor);
                         if (cs.BorderTop != null) style.tableCellProperties.BorderTop = FormatOdsBorder(cs.BorderTop);
                         if (cs.BorderBottom != null) style.tableCellProperties.BorderBottom = FormatOdsBorder(cs.BorderBottom);
                         if (cs.BorderLeft != null) style.tableCellProperties.BorderLeft = FormatOdsBorder(cs.BorderLeft);
@@ -966,7 +966,7 @@ namespace OslSpreadsheet.Services
                 BorderStyle.Thick => "2.5pt",
                 _ => "0.75pt"
             };
-            var color = b.Color ?? "#000000";
+            var color = Colors.Normalize(b.Color) ?? "#000000";
             return $"{width} solid {color}";
         }
 

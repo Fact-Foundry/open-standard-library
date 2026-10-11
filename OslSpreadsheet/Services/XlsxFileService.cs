@@ -646,7 +646,7 @@ namespace OslSpreadsheet.Services
         private static string EdgeKey(CellBorder? b) =>
             b == null ? "" : $"{b.Style}:{b.Color}";
 
-        private static string ToArgb(string hex) => "FF" + hex.TrimStart('#');
+        private static string ToArgb(string color) => Colors.ToArgb(color);
 
         private static string BuildFontXml(CellStyle s)
         {

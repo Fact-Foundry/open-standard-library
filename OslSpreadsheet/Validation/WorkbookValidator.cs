@@ -148,6 +148,22 @@ namespace OslSpreadsheet.Validation
                     break;
             }
 
+            if (cell.Style is CellStyle cellStyle)
+            {
+                foreach (var (property, color) in new[]
+                {
+                    ("FontColor", cellStyle.FontColor), ("BackgroundColor", cellStyle.BackgroundColor),
+                    ("BorderTop.Color", cellStyle.BorderTop?.Color), ("BorderBottom.Color", cellStyle.BorderBottom?.Color),
+                    ("BorderLeft.Color", cellStyle.BorderLeft?.Color), ("BorderRight.Color", cellStyle.BorderRight?.Color)
+                })
+                {
+                    if (color != null && Colors.Normalize(color) == null)
+                        issues.Error($"{Prefix}_COLOR_INVALID",
+                            $"{property} \"{XlsxValidator.Truncate(color)}\" is not a color. Use six hex digits, e.g. \"#FF0000\".",
+                            location: location, sheet: sheetName, cell: cellName, row: cell.Row);
+                }
+            }
+
             if (cell.Style?.NumberFormat is { Length: > 0 } numberFormat)
             {
                 if (FindControlChar(numberFormat) is char badFormat)

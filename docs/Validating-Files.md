@@ -134,6 +134,7 @@ Rules are prefixed `WB_`:
 | `WB_FORMULA_UNKNOWN_SHEET` | Error | A formula refers to a sheet that isn't in the workbook |
 | `WB_FORMULA_DANGEROUS` | Warning (Error with `TreatDangerousFormulasAsErrors`) | A formula calling a function that reaches outside the spreadsheet, or using DDE syntax; see [Formula checks](#formula-checks) |
 | `WB_FORMULA_EXTERNAL_REFERENCE` | Warning | A formula referring to another workbook |
+| `WB_COLOR_INVALID` | Error | A `FontColor`, `BackgroundColor`, or border `Color` that isn't six hex digits (`#FF0000`; the `#` is optional) |
 | `WB_NUMBER_FORMAT_INVALID` | Error | A `NumberFormat` containing a control character |
 | `WB_NUMBER_FORMAT_UNSUPPORTED` | Warning (ODS only) | A `NumberFormat` that can't be translated to an ODS data style; the cell falls back to the default format |
 | `WB_FREEZE_INVALID` / `WB_AUTOFILTER_INVALID` | Error | Negative freeze counts, or an auto-filter range whose end is before its start |
