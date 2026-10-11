@@ -34,7 +34,7 @@ namespace OslSpreadsheet.Services
                 files.Add(new InMemoryFile
                 {
                     FileName = $"xl/worksheets/sheet{sheet.Index}.xml",
-                    Content = BuildWorksheet(sheet, styleIndexMap)
+                    Content = BuildWorksheet(sheet, styleIndexMap, isActiveSheet: sheet == workbook.Sheets[0])
                 });
             }
 
@@ -52,12 +52,14 @@ namespace OslSpreadsheet.Services
             return archiveStream.ToArray();
         }
 
-        public async Task<oWorkbook> GenerateModel(byte[] file)
+        public async Task<oWorkbook> GenerateModel(byte[] file, OoxSpreadsheet.ImportOptions options)
         {
             oWorkbook workbook = new();
 
             using var ms = new MemoryStream(file);
             using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+            XmlService.EnforceSizeLimit(archive, options);
+            long cellCount = 0;
 
             XNamespace mainNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
             XNamespace rNs    = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -69,40 +71,45 @@ namespace OslSpreadsheet.Services
             if (ssEntry != null)
             {
                 using var ssStream = ssEntry.Open();
-                var ssDoc = await Task.Run(() => XDocument.Load(ssStream));
+                var ssDoc = await Task.Run(() => XmlService.LoadSecure(ssStream, preserveWhitespace: true));
                 sharedStrings = ssDoc.Descendants(mainNs + "si")
                     .Select(si => string.Concat(si.Descendants(mainNs + "t").Select(t => t.Value)))
                     .ToList();
             }
 
-            // Load styles.xml to detect date-formatted cells
+            // Load styles.xml to detect date-formatted cells and read each cell format's number format code
             var dateXfIndices = new HashSet<int>();
+            var xfStyles = new Dictionary<int, CellStyle>();
             var stylesEntry = archive.GetEntry("xl/styles.xml");
             if (stylesEntry != null)
             {
                 using var stylesStream = stylesEntry.Open();
-                var stylesDoc = await Task.Run(() => XDocument.Load(stylesStream));
+                var stylesDoc = await Task.Run(() => XmlService.LoadSecure(stylesStream));
                 dateXfIndices = GetDateXfIndices(stylesDoc, mainNs);
+                xfStyles = GetXfStyles(stylesDoc, mainNs, GetXfFormatCodes(stylesDoc, mainNs));
             }
 
             // Load workbook.xml
             var wbEntry = archive.GetEntry("xl/workbook.xml")
-                ?? throw new InvalidOperationException("Invalid XLSX file: missing xl/workbook.xml");
+                ?? throw new OoxSpreadsheet.SpreadsheetImportException("The package has no xl/workbook.xml, so it is not an XLSX file.");
 
             XDocument wbDoc;
             using (var wbStream = wbEntry.Open())
-                wbDoc = await Task.Run(() => XDocument.Load(wbStream));
+                wbDoc = await Task.Run(() => XmlService.LoadSecure(wbStream));
 
             // Load workbook.xml.rels — maps rId to sheet file path
             var relsEntry = archive.GetEntry("xl/_rels/workbook.xml.rels")
-                ?? throw new InvalidOperationException("Invalid XLSX file: missing xl/_rels/workbook.xml.rels");
+                ?? throw new OoxSpreadsheet.SpreadsheetImportException("The package has no xl/_rels/workbook.xml.rels, so its sheets can't be located.");
 
             XDocument relsDoc;
             using (var relsStream = relsEntry.Open())
-                relsDoc = await Task.Run(() => XDocument.Load(relsStream));
+                relsDoc = await Task.Run(() => XmlService.LoadSecure(relsStream));
 
-            var relationships = relsDoc.Descendants(relsNs + "Relationship")
-                .ToDictionary(r => r.Attribute("Id")!.Value, r => r.Attribute("Target")!.Value);
+            // Relationships missing an Id or Target are malformed; skip them rather than fail on a null
+            var relationships = new Dictionary<string, string>();
+            foreach (var rel in relsDoc.Descendants(relsNs + "Relationship"))
+                if (rel.Attribute("Id")?.Value is string id && rel.Attribute("Target")?.Value is string target)
+                    relationships.TryAdd(id, target);
 
             foreach (var sheetEl in wbDoc.Descendants(mainNs + "sheet"))
             {
@@ -119,7 +126,18 @@ namespace OslSpreadsheet.Services
 
                 XDocument sheetDoc;
                 using (var sheetStream = sheetEntry.Open())
-                    sheetDoc = await Task.Run(() => XDocument.Load(sheetStream));
+                    sheetDoc = await Task.Run(() => XmlService.LoadSecure(sheetStream, preserveWhitespace: true));
+
+                // Column widths: only columns with an explicit custom width are imported
+                foreach (var colEl in sheetDoc.Descendants(mainNs + "col"))
+                {
+                    var custom = colEl.Attribute("customWidth")?.Value;
+                    if (custom is not ("1" or "true")) continue;
+                    if (!int.TryParse(colEl.Attribute("min")?.Value, out int min) || !int.TryParse(colEl.Attribute("max")?.Value, out int max)) continue;
+                    if (!double.TryParse(colEl.Attribute("width")?.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double width)) continue;
+                    for (int c = Math.Max(1, min); c <= Math.Min(max, min + MaxImportedWidthColumns - 1); c++)
+                        sheet.SetColumnWidth(c, width);
+                }
 
                 var pane = sheetDoc.Descendants(mainNs + "pane").FirstOrDefault();
                 if (pane?.Attribute("state")?.Value == "frozen")
@@ -129,6 +147,9 @@ namespace OslSpreadsheet.Services
                     if (int.TryParse(pane.Attribute("xSplit")?.Value, out int freezeCols))
                         sheet.FreezeColumns = freezeCols;
                 }
+
+                // Shared formulas store the text once (on the master cell) and are reused by other cells with references shifted
+                var sharedFormulas = new Dictionary<string, (string formula, int row, int col)>();
 
                 foreach (var rowEl in sheetDoc.Descendants(mainNs + "row"))
                 {
@@ -156,6 +177,9 @@ namespace OslSpreadsheet.Services
                             case "str": // formula string result
                                 value = rawValue;
                                 break;
+                            case "e": // error value such as #N/A
+                                value = rawValue;
+                                break;
                             case "b": // boolean
                                 value = rawValue == "1" ? "true" : "false";
                                 valueType = CellValueType.Boolean;
@@ -165,7 +189,7 @@ namespace OslSpreadsheet.Services
                                 if (!string.IsNullOrEmpty(value))
                                 {
                                     var styleIdx = int.TryParse(cellEl.Attribute("s")?.Value, out int s) ? s : -1;
-                                    if (styleIdx >= 0 && dateXfIndices.Contains(styleIdx) && double.TryParse(rawValue, out double serial))
+                                    if (styleIdx >= 0 && dateXfIndices.Contains(styleIdx) && double.TryParse(rawValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double serial))
                                     {
                                         valueType = CellValueType.DateTime;
                                         value = System.DateTime.FromOADate(serial).ToString("yyyy-MM-ddTHH:mm:ss");
@@ -178,8 +202,22 @@ namespace OslSpreadsheet.Services
                                 break;
                         }
 
+                        if (++cellCount > options.MaxCells)
+                            throw new OoxSpreadsheet.ImportLimitExceededException(
+                                $"The file has more than {options.MaxCells:N0} cells, the import limit (ImportOptions.MaxCells).");
+
                         var oCell = sheet.AddCell(rowNum, colNum, value);
                         oCell.ValueType = valueType;
+                        oCell.Formula = ReadFormula(cellEl.Element(mainNs + "f"), rowNum, colNum, sharedFormulas);
+
+                        if (int.TryParse(cellEl.Attribute("s")?.Value, out int xfIndex) && xfStyles.TryGetValue(xfIndex, out var xfStyle))
+                        {
+                            var style = xfStyle.Clone();
+                            if (style.NumberFormat != null && IsDefaultFormat(style.NumberFormat, valueType))
+                                style.NumberFormat = null;
+                            if (!style.IsDefault)
+                                oCell.Style = style;
+                        }
                     }
                 }
 
@@ -200,6 +238,25 @@ namespace OslSpreadsheet.Services
             }
 
             return workbook;
+        }
+
+        private static string? ReadFormula(XElement? f, int row, int col, Dictionary<string, (string formula, int row, int col)> sharedFormulas)
+        {
+            if (f == null)
+                return null;
+
+            var text = f.Value;
+            var sharedIndex = f.Attribute("t")?.Value == "shared" ? f.Attribute("si")?.Value : null;
+
+            if (sharedIndex != null)
+            {
+                if (!string.IsNullOrEmpty(text))
+                    sharedFormulas[sharedIndex] = (text, row, col);
+                else if (sharedFormulas.TryGetValue(sharedIndex, out var master))
+                    text = FormulaTranslator.Shift(master.formula, row - master.row, col - master.col);
+            }
+
+            return string.IsNullOrEmpty(text) ? null : FormulaTranslator.FromXlsx(text);
         }
 
         private static (int row, int col) ParseCellRef(string cellRef)
@@ -246,6 +303,9 @@ namespace OslSpreadsheet.Services
             foreach (var sheet in workbook.Sheets)
                 sb.Append($"<sheet name=\"{SecurityElement.Escape(sheet.SheetName)}\" sheetId=\"{sheet.Index}\" r:id=\"rId{sheet.Index}\"/>");
             sb.Append("</sheets>");
+            // The library doesn't calculate formulas, so ask the application to compute them when the file opens
+            if (workbook.Sheets.Any(s => s.Cells.Any(c => FormulaTranslator.Normalize(c.Formula) != null)))
+                sb.Append("<calcPr fullCalcOnLoad=\"1\"/>");
             sb.Append("</workbook>");
             return Utf8(sb.ToString());
         }
@@ -270,7 +330,7 @@ namespace OslSpreadsheet.Services
         private const string DateOnlyFormatCode = "yyyy-mm-dd";
 
         private static bool IsDateOnly(string value) =>
-            System.DateTime.TryParse(value, out var dt) && dt.TimeOfDay == TimeSpan.Zero && !value.Contains('T');
+            System.DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt) && dt.TimeOfDay == TimeSpan.Zero && !value.Contains('T');
 
         private static readonly HashSet<int> BuiltInDateNumFmtIds =
             new(Enumerable.Range(14, 9)
@@ -280,8 +340,6 @@ namespace OslSpreadsheet.Services
 
         private static (byte[] stylesXml, Dictionary<string, int> styleIndexMap) BuildStylesForWorkbook(oWorkbook workbook)
         {
-            bool hasDateCells = workbook.Sheets.Any(s => s.Cells.Any(c => c.ValueType == CellValueType.DateTime));
-
             var defaultFontKey = GetFontKey(new CellStyle());
             var fonts = new List<string> { "<font><sz val=\"11\"/><name val=\"Calibri\"/></font>" };
             var fontKeys = new Dictionary<string, int> { [defaultFontKey] = 0 };
@@ -302,18 +360,36 @@ namespace OslSpreadsheet.Services
 
             var styleIndexMap = new Dictionary<string, int>();
 
+            // Custom format codes get ids from 164 upward; the two default date codes keep their fixed ids
+            var customNumFmts = new Dictionary<string, int>
+            {
+                [DateTimeFormatCode] = DateTimeNumFmtId,
+                [DateOnlyFormatCode] = DateOnlyNumFmtId
+            };
+            var usedNumFmtIds = new HashSet<int>();
+
+            int NumFmtIdFor(string? code)
+            {
+                if (code == null) return 0;
+                if (NumberFormatTranslator.BuiltInId(code) is int builtIn) return builtIn;
+                if (!customNumFmts.TryGetValue(code, out int id))
+                {
+                    id = 164 + customNumFmts.Count;
+                    customNumFmts[code] = id;
+                }
+                return id;
+            }
+
             var uniqueEntries = new Dictionary<string, (CellStyle style, int numFmtId)>();
             foreach (var sheet in workbook.Sheets)
                 foreach (var cell in sheet.Cells)
                 {
-                    int numFmtId = cell.ValueType == CellValueType.DateTime
-                        ? (IsDateOnly(cell.Value) ? DateOnlyNumFmtId : DateTimeNumFmtId)
-                        : 0;
-                    var style = cell.Style ?? new CellStyle();
-                    var mapKey = numFmtId > 0 ? $"dt{numFmtId}|{GetStyleKey(style)}" : GetStyleKey(style);
+                    var mapKey = StyleMapKey(cell);
+                    if (mapKey == null) continue;
 
-                    if (cell.Style != null || numFmtId > 0)
-                        uniqueEntries.TryAdd(mapKey, (style, numFmtId));
+                    int numFmtId = NumFmtIdFor(EffectiveFormatCode(cell));
+                    usedNumFmtIds.Add(numFmtId);
+                    uniqueEntries.TryAdd(mapKey, (cell.Style ?? new CellStyle(), numFmtId));
                 }
 
             foreach (var (key, (style, numFmtId)) in uniqueEntries)
@@ -370,14 +446,12 @@ namespace OslSpreadsheet.Services
             var sb = new StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
             sb.Append("<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
-            if (hasDateCells)
+            var customUsed = customNumFmts.Where(kv => usedNumFmtIds.Contains(kv.Value)).OrderBy(kv => kv.Value).ToList();
+            if (customUsed.Count > 0)
             {
-                var usedFmtIds = uniqueEntries.Values.Select(e => e.numFmtId).Where(id => id > 0).Distinct().ToList();
-                sb.Append($"<numFmts count=\"{usedFmtIds.Count}\">");
-                if (usedFmtIds.Contains(DateTimeNumFmtId))
-                    sb.Append($"<numFmt numFmtId=\"{DateTimeNumFmtId}\" formatCode=\"{DateTimeFormatCode}\"/>");
-                if (usedFmtIds.Contains(DateOnlyNumFmtId))
-                    sb.Append($"<numFmt numFmtId=\"{DateOnlyNumFmtId}\" formatCode=\"{DateOnlyFormatCode}\"/>");
+                sb.Append($"<numFmts count=\"{customUsed.Count}\">");
+                foreach (var (code, id) in customUsed)
+                    sb.Append($"<numFmt numFmtId=\"{id}\" formatCode=\"{SecurityElement.Escape(code)}\"/>");
                 sb.Append("</numFmts>");
             }
             sb.Append($"<fonts count=\"{fonts.Count}\">");
@@ -397,6 +471,123 @@ namespace OslSpreadsheet.Services
 
             return (Utf8(sb.ToString()), styleIndexMap);
         }
+
+        /// <summary>
+        /// Maps each cellXfs index to its number format code (custom codes from numFmts, or Excel's built-in codes).
+        /// Entries with the General format (id 0) are omitted.
+        /// </summary>
+        private static Dictionary<int, string> GetXfFormatCodes(XDocument stylesDoc, XNamespace ns)
+        {
+            var codes = new Dictionary<int, string>(NumberFormatTranslator.BuiltInFormats);
+            foreach (var nf in stylesDoc.Descendants(ns + "numFmt"))
+                if (int.TryParse(nf.Attribute("numFmtId")?.Value, out int id) && nf.Attribute("formatCode")?.Value is string code)
+                    codes[id] = code;
+
+            var result = new Dictionary<int, string>();
+            var xfs = stylesDoc.Descendants(ns + "cellXfs").Elements(ns + "xf").ToList();
+            for (int i = 0; i < xfs.Count; i++)
+            {
+                var numFmtId = int.TryParse(xfs[i].Attribute("numFmtId")?.Value, out int nfId) ? nfId : 0;
+                if (numFmtId != 0 && codes.TryGetValue(numFmtId, out var code))
+                    result[i] = code;
+            }
+            return result;
+        }
+
+        // A <col> range can span the whole sheet (LibreOffice writes min="1" max="1024"); cap how many widths one range sets
+        private const int MaxImportedWidthColumns = 1024;
+
+        /// <summary>
+        /// Builds a CellStyle for each cellXfs entry from its font, fill, border, alignment, and number format.
+        /// Entries that resolve to the default style are omitted. Values matching the workbook's default font
+        /// (fonts[0]) are treated as unset so a round-trip doesn't invent FontName/FontSize.
+        /// </summary>
+        private static Dictionary<int, CellStyle> GetXfStyles(XDocument stylesDoc, XNamespace ns, Dictionary<int, string> xfFormatCodes)
+        {
+            var fonts = stylesDoc.Descendants(ns + "fonts").Elements(ns + "font").ToList();
+            var fills = stylesDoc.Descendants(ns + "fills").Elements(ns + "fill").ToList();
+            var borders = stylesDoc.Descendants(ns + "borders").Elements(ns + "border").ToList();
+            var xfs = stylesDoc.Descendants(ns + "cellXfs").Elements(ns + "xf").ToList();
+
+            var defaultFontName = fonts.Count > 0 ? fonts[0].Element(ns + "name")?.Attribute("val")?.Value : null;
+            var defaultFontSize = fonts.Count > 0 ? fonts[0].Element(ns + "sz")?.Attribute("val")?.Value : null;
+
+            var result = new Dictionary<int, CellStyle>();
+            for (int i = 0; i < xfs.Count; i++)
+            {
+                var xf = xfs[i];
+                var style = new CellStyle();
+
+                if (int.TryParse(xf.Attribute("fontId")?.Value, out int fontId) && fontId > 0 && fontId < fonts.Count)
+                {
+                    var font = fonts[fontId];
+                    style.Bold = font.Element(ns + "b") is XElement b && b.Attribute("val")?.Value is not ("0" or "false");
+                    style.Italic = font.Element(ns + "i") is XElement it && it.Attribute("val")?.Value is not ("0" or "false");
+                    style.Underline = font.Element(ns + "u") is XElement u && u.Attribute("val")?.Value is not ("none" or "0" or "false");
+                    style.FontColor = ReadRgb(font.Element(ns + "color"));
+                    var name = font.Element(ns + "name")?.Attribute("val")?.Value;
+                    if (name != null && name != defaultFontName) style.FontName = name;
+                    var size = font.Element(ns + "sz")?.Attribute("val")?.Value;
+                    if (size != null && size != defaultFontSize && double.TryParse(size, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double sz))
+                        style.FontSize = sz;
+                }
+
+                if (int.TryParse(xf.Attribute("fillId")?.Value, out int fillId) && fillId > 1 && fillId < fills.Count)
+                {
+                    var pattern = fills[fillId].Element(ns + "patternFill");
+                    if (pattern?.Attribute("patternType")?.Value == "solid")
+                        style.BackgroundColor = ReadRgb(pattern.Element(ns + "fgColor"));
+                }
+
+                if (int.TryParse(xf.Attribute("borderId")?.Value, out int borderId) && borderId > 0 && borderId < borders.Count)
+                {
+                    var border = borders[borderId];
+                    style.BorderTop = ReadBorderEdge(border.Element(ns + "top"), ns);
+                    style.BorderBottom = ReadBorderEdge(border.Element(ns + "bottom"), ns);
+                    style.BorderLeft = ReadBorderEdge(border.Element(ns + "left"), ns);
+                    style.BorderRight = ReadBorderEdge(border.Element(ns + "right"), ns);
+                }
+
+                style.WrapText = xf.Element(ns + "alignment")?.Attribute("wrapText")?.Value is "1" or "true";
+
+                if (xfFormatCodes.TryGetValue(i, out var code))
+                    style.NumberFormat = code;
+
+                if (!style.IsDefault)
+                    result[i] = style;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Reads an ARGB color attribute as "#RRGGBB". Theme and indexed colors have no fixed value and are ignored.
+        /// </summary>
+        private static string? ReadRgb(XElement? color)
+        {
+            var rgb = color?.Attribute("rgb")?.Value;
+            if (rgb == null || rgb.Length < 6) return null;
+            return "#" + rgb[^6..].ToUpperInvariant();
+        }
+
+        private static CellBorder? ReadBorderEdge(XElement? edge, XNamespace ns)
+        {
+            var styleName = edge?.Attribute("style")?.Value;
+            if (styleName == null || styleName == "none") return null;
+            var style = styleName switch
+            {
+                "thin" or "hair" or "dotted" or "dashed" => BorderStyle.Thin,
+                "medium" or "mediumDashed" or "mediumDashDot" or "mediumDashDotDot" or "double" => BorderStyle.Medium,
+                "thick" => BorderStyle.Thick,
+                _ => BorderStyle.Thin
+            };
+            return new CellBorder { Style = style, Color = ReadRgb(edge!.Element(ns + "color")) };
+        }
+
+        /// <summary>
+        /// The library's own default date formats aren't reported as a NumberFormat on import, so a round-trip leaves Style null.
+        /// </summary>
+        private static bool IsDefaultFormat(string code, CellValueType valueType) =>
+            valueType == CellValueType.DateTime && code is DateTimeFormatCode or DateOnlyFormatCode;
 
         private static HashSet<int> GetDateXfIndices(XDocument stylesDoc, XNamespace ns)
         {
@@ -423,7 +614,31 @@ namespace OslSpreadsheet.Services
         }
 
         private static string GetStyleKey(CellStyle s) =>
-            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}|{s.NumberFormat}";
+
+        /// <summary>
+        /// The format code a cell will be written with: its style's NumberFormat, else the default date code for DateTime cells, else null.
+        /// </summary>
+        private static string? EffectiveFormatCode(oCell cell)
+        {
+            if (!string.IsNullOrEmpty(cell.Style?.NumberFormat))
+                return cell.Style.NumberFormat;
+            if (cell.ValueType == CellValueType.DateTime)
+                return IsDateOnly(cell.Value) ? DateOnlyFormatCode : DateTimeFormatCode;
+            return null;
+        }
+
+        /// <summary>
+        /// Key into the style index map for a cell: the visual style key plus the effective format code.
+        /// Returns null when the cell needs no style entry.
+        /// </summary>
+        private static string? StyleMapKey(oCell cell)
+        {
+            var code = EffectiveFormatCode(cell);
+            if (cell.Style == null && code == null)
+                return null;
+            return $"{GetStyleKey(cell.Style ?? new CellStyle())}|fmt:{code}";
+        }
 
         private static string GetFontKey(CellStyle s) =>
             $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.FontName}|{s.FontSize}";
@@ -434,7 +649,7 @@ namespace OslSpreadsheet.Services
         private static string EdgeKey(CellBorder? b) =>
             b == null ? "" : $"{b.Style}:{b.Color}";
 
-        private static string ToArgb(string hex) => "FF" + hex.TrimStart('#');
+        private static string ToArgb(string color) => Colors.ToArgb(color);
 
         private static string BuildFontXml(CellStyle s)
         {
@@ -442,7 +657,7 @@ namespace OslSpreadsheet.Services
             if (s.Bold) sb.Append("<b/>");
             if (s.Italic) sb.Append("<i/>");
             if (s.Underline) sb.Append("<u/>");
-            sb.Append($"<sz val=\"{s.FontSize ?? 11}\"/>");
+            sb.Append($"<sz val=\"{(s.FontSize ?? 11).ToString(System.Globalization.CultureInfo.InvariantCulture)}\"/>");
             if (s.FontColor != null)
                 sb.Append($"<color rgb=\"{ToArgb(s.FontColor)}\"/>");
             sb.Append($"<name val=\"{SecurityElement.Escape(s.FontName ?? "Calibri")}\"/>");
@@ -472,7 +687,7 @@ namespace OslSpreadsheet.Services
             return $"<{edge} style=\"{style}\"/>";
         }
 
-        private static byte[] BuildWorksheet(oSpreadsheet sheet, Dictionary<string, int> styleIndexMap)
+        private static byte[] BuildWorksheet(oSpreadsheet sheet, Dictionary<string, int> styleIndexMap, bool isActiveSheet)
         {
             var sb = new StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
@@ -481,7 +696,8 @@ namespace OslSpreadsheet.Services
             if (sheet.FreezeRows > 0 || sheet.FreezeColumns > 0)
             {
                 var topLeftCell = $"{ColumnLetter(sheet.FreezeColumns + 1)}{sheet.FreezeRows + 1}";
-                sb.Append("<sheetViews><sheetView tabSelected=\"1\" workbookViewId=\"0\">");
+                // Only one sheet may be selected; Excel treats multiple selected sheets as a group and applies edits to all of them
+                sb.Append(isActiveSheet ? "<sheetViews><sheetView tabSelected=\"1\" workbookViewId=\"0\">" : "<sheetViews><sheetView workbookViewId=\"0\">");
                 sb.Append($"<pane");
                 if (sheet.FreezeColumns > 0) sb.Append($" xSplit=\"{sheet.FreezeColumns}\"");
                 if (sheet.FreezeRows > 0) sb.Append($" ySplit=\"{sheet.FreezeRows}\"");
@@ -493,45 +709,36 @@ namespace OslSpreadsheet.Services
             {
                 sb.Append("<cols>");
                 foreach (var (col, width) in sheet.ColumnWidths.OrderBy(x => x.Key))
-                    sb.Append($"<col min=\"{col}\" max=\"{col}\" width=\"{width}\" customWidth=\"1\"/>");
+                    sb.Append($"<col min=\"{col}\" max=\"{col}\" width=\"{width.ToString(System.Globalization.CultureInfo.InvariantCulture)}\" customWidth=\"1\"/>");
                 sb.Append("</cols>");
             }
 
             sb.Append("<sheetData>");
 
-            for (int r = 1; r <= sheet.RowCount; r++)
-            {
-                var rowCells = sheet.GetRow(r);
-                if (!rowCells.Any()) continue;
+            // Group cells by row in one pass rather than scanning the cell list once per row
+            var rows = sheet.Cells.GroupBy(c => c.Row).OrderBy(g => g.Key);
 
+            foreach (var rowGroup in rows)
+            {
+                var r = rowGroup.Key;
                 sb.Append($"<row r=\"{r}\">");
-                foreach (var cell in rowCells)
+                foreach (var cell in rowGroup.OrderBy(c => c.Column))
                 {
                     var cellRef = $"{ColumnLetter(cell.Column)}{cell.Row}";
                     var styleAttr = "";
-                    var visualKey = cell.Style != null ? GetStyleKey(cell.Style) : null;
+                    if (StyleMapKey(cell) is string mapKey && styleIndexMap.TryGetValue(mapKey, out int si) && si > 0)
+                        styleAttr = $" s=\"{si}\"";
 
-                    if (cell.ValueType == CellValueType.DateTime)
-                    {
-                        int fmtId = IsDateOnly(cell.Value) ? DateOnlyNumFmtId : DateTimeNumFmtId;
-                        var dateKey = visualKey != null ? $"dt{fmtId}|{visualKey}" : $"dt{fmtId}|{GetStyleKey(new CellStyle())}";
-                        if (styleIndexMap.TryGetValue(dateKey, out int si))
-                            styleAttr = $" s=\"{si}\"";
-                    }
-                    else if (visualKey != null)
-                    {
-                        if (styleIndexMap.TryGetValue(visualKey, out int si) && si > 0)
-                            styleAttr = $" s=\"{si}\"";
-                    }
-
-                    if (cell.ValueType == CellValueType.DateTime && System.DateTime.TryParse(cell.Value, out var dt))
-                        sb.Append($"<c r=\"{cellRef}\"{styleAttr}><v>{dt.ToOADate()}</v></c>");
+                    if (FormulaTranslator.Normalize(cell.Formula) is string formula)
+                        sb.Append(BuildFormulaCell(cell, cellRef, styleAttr, formula));
+                    else if (cell.ValueType == CellValueType.DateTime && System.DateTime.TryParse(cell.Value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt))
+                        sb.Append($"<c r=\"{cellRef}\"{styleAttr}><v>{dt.ToOADate().ToString(System.Globalization.CultureInfo.InvariantCulture)}</v></c>");
                     else if (cell.ValueType == CellValueType.Float || cell.ValueType == CellValueType.Int64)
                         sb.Append($"<c r=\"{cellRef}\"{styleAttr}><v>{SecurityElement.Escape(cell.Value)}</v></c>");
                     else if (cell.ValueType == CellValueType.Boolean)
                         sb.Append($"<c r=\"{cellRef}\"{styleAttr} t=\"b\"><v>{(cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "1" : "0")}</v></c>");
                     else
-                        sb.Append($"<c r=\"{cellRef}\"{styleAttr} t=\"inlineStr\"><is><t>{SecurityElement.Escape(cell.Value)}</t></is></c>");
+                        sb.Append($"<c r=\"{cellRef}\"{styleAttr} t=\"inlineStr\"><is><t xml:space=\"preserve\">{SecurityElement.Escape(cell.Value)}</t></is></c>");
                 }
                 sb.Append("</row>");
             }
@@ -543,6 +750,28 @@ namespace OslSpreadsheet.Services
 
             sb.Append("</worksheet>");
             return Utf8(sb.ToString());
+        }
+
+        /// <summary>
+        /// Builds a formula cell. The cell's Value, if set, is written as the cached result; otherwise no result is stored.
+        /// </summary>
+        private static string BuildFormulaCell(oCell cell, string cellRef, string styleAttr, string formula)
+        {
+            var f = $"<f>{SecurityElement.Escape(FormulaTranslator.ToXlsx(formula))}</f>";
+
+            if (string.IsNullOrEmpty(cell.Value))
+                return $"<c r=\"{cellRef}\"{styleAttr}>{f}</c>";
+
+            return cell.ValueType switch
+            {
+                CellValueType.Float or CellValueType.Int64 when double.TryParse(cell.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _)
+                    => $"<c r=\"{cellRef}\"{styleAttr}>{f}<v>{SecurityElement.Escape(cell.Value)}</v></c>",
+                CellValueType.DateTime when System.DateTime.TryParse(cell.Value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt)
+                    => $"<c r=\"{cellRef}\"{styleAttr}>{f}<v>{dt.ToOADate().ToString(System.Globalization.CultureInfo.InvariantCulture)}</v></c>",
+                CellValueType.Boolean
+                    => $"<c r=\"{cellRef}\"{styleAttr} t=\"b\">{f}<v>{(cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "1" : "0")}</v></c>",
+                _ => $"<c r=\"{cellRef}\"{styleAttr} t=\"str\">{f}<v>{SecurityElement.Escape(cell.Value)}</v></c>"
+            };
         }
 
         private static string ColumnLetter(int col)

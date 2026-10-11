@@ -16,16 +16,22 @@ A .NET library for reading and creating spreadsheet files in ODS, XLSX, and deli
 
 - **Multi-sheet workbooks** — create and import workbooks with multiple named sheets
 - **Cell value types** — String, Float, Boolean, DateTime, and Int64
-- **Cell styling** — bold, italic, underline, font color/name/size, background color, borders (thin/medium/thick with color per edge), and text wrapping
-- **Column widths** — manual `SetColumnWidth()` or automatic `AutoFitColumns()` with min/max constraints
+- **Cell styling** — bold, italic, underline, font color/name/size, background color, borders (thin/medium/thick with color per edge), and text wrapping. Written and read back for both XLSX and ODS
+- **Number formats** — `CellStyle.NumberFormat` takes an Excel format code (`#,##0.00`, `0%`, `"$"#,##0.00`, `mmm d, yyyy`, `h:mm AM/PM`, ...). Written to XLSX as-is and translated to ODS data styles; read back on import from both formats
+- **Column widths** — manual `SetColumnWidth()` or automatic `AutoFitColumns()` with min/max constraints. Written and read back for both XLSX and ODS
 - **Freeze panes** — freeze rows and/or columns with `FreezeRows` and `FreezeColumns`
 - **Auto-filters** — `SetAutoFilter()` for the full range or a custom range
 - **Header row detection** — `HasHeaderRow`, `HeaderNames`, and `GetColumn(string)` for column-name-based access. Auto-detected on XLSX/ODS import when freeze panes or auto-filters are present
 - **Streaming CSV reader** — `ReadCsvRowsAsync()` reads rows one at a time via `IAsyncEnumerable` with optional header detection and row limit
-- **File encoding options** — UTF-8 (default), ASCII, Unicode (UTF-16), and UTF-32 for delimited files
+- **RFC 4180 quoting** — delimited import handles quoted and unquoted values, including delimiters, doubled quotes, and line breaks inside quoted values
+- **File encoding options** — UTF-8 (default), ASCII, Unicode (UTF-16), and UTF-32 for delimited files, on both export and import
 - **Epoch conversion** — `FromEpochSeconds()`, `FromEpochMilliseconds()`, `ToEpochSeconds()`, `ToEpochMilliseconds()` extension methods on cells
-- **Formulas** — set formula expressions on cells
+- **Formulas** — set `Formula` on a cell using Excel syntax (`=SUM(A1:A10)`); written to and read from XLSX and ODS, with automatic translation to ODS OpenFormula syntax. The library does not calculate results — see [Formulas](#formulas)
 - **File validation** — `SpreadsheetValidator` checks that XLSX, ODS, and delimited files are well-formed without importing them, returning structured errors and warnings (sheet, cell, row, rule code, message). Useful for vetting files produced by LLMs or other tools before they reach users
+- **Formula safety checks** — both validators flag formulas that reach outside the spreadsheet (`WEBSERVICE`, `HYPERLINK`, `RTD`, DDE syntax, `CALL`, ...) and references to other workbooks, as warnings or, with `TreatDangerousFormulasAsErrors`, as errors
+- **CSV injection protection** — `EscapeFormulaLikeValues` prefixes formula-like text (`=`, `+`, `-`, `@`, tab, CR) with an apostrophe in delimited output, and both validators warn about such values
+- **Import limits** — `ImportOptions` caps the decompressed size and cell count of imported files, and XML document type declarations are rejected, so a small malicious file can't exhaust memory
+- **Workbook validation** — `Workbook.Validate()` reports problems in the in-memory model (values that don't match their type, bad sheet names, formulas pointing at missing sheets, ...) and the Generate methods refuse to write an invalid file, throwing `InvalidWorkbookException` with the same structured issues
 - **Dependency injection** — implements `ISpreadsheet` with `IDisposable`/`IAsyncDisposable`
 
 ## Installation
@@ -84,6 +90,17 @@ if (!result.IsValid)
 }
 ```
 
+The Generate methods run the same kind of check on the workbook first, so a bad value never silently produces a broken file:
+
+```csharp
+var cell = sheet.AddCell(2, 2, "n/a", CellValueType.Float);
+
+var check = spreadsheet.Workbook.Validate(ValidationFileFormat.Xlsx);
+// check.IsValid == false; check.Errors[0]: WB_CELL_NOT_NUMERIC at Data!B2
+
+await spreadsheet.GenerateXlsxFileAsync(); // throws InvalidWorkbookException carrying the same result
+```
+
 See [Validating Files](https://github.com/kupokev/open-standard-library/blob/main/docs/Validating-Files.md) for details.
 
 ### Stream CSV rows
@@ -113,7 +130,25 @@ cell.Style = new CellStyle
     BorderBottom = new CellBorder { Style = BorderStyle.Medium, Color = "#1565C0" },
     WrapText = true
 };
+
+// Number formats use Excel format codes
+sheet.AddCell(2, 1, "1234.5", CellValueType.Float).Style = new CellStyle { NumberFormat = "#,##0.00" };
+sheet.AddCell(2, 2, "0.256", CellValueType.Float).Style = new CellStyle { NumberFormat = "0.0%" };
+sheet.AddCell(2, 3, "9.99", CellValueType.Float).Style = new CellStyle { NumberFormat = "\"$\"#,##0.00" };
+sheet.AddCell(2, 4, "2024-01-31", CellValueType.DateTime).Style = new CellStyle { NumberFormat = "mmmm d, yyyy" };
 ```
+
+### Formulas
+
+```csharp
+sheet.AddCell(1, 1, "10", CellValueType.Float);
+sheet.AddCell(2, 1, "20", CellValueType.Float);
+
+var total = sheet.AddCell(3, 1);
+total.Formula = "=SUM(A1:A2)";          // Excel A1 syntax; other sheets as 'Sheet Name'!A1
+```
+
+The library doesn't calculate formulas. Excel and LibreOffice compute them when the file is opened (generated XLSX files are flagged to recalculate on load), but tools that read stored values without calculating — such as pandas, file previewers, or this library's own import — see an empty result. If you already know the result, set it as the cell's `Value` and `ValueType`, and it will be stored as the cached result.
 
 ### Epoch conversion
 

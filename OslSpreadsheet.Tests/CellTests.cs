@@ -88,7 +88,7 @@ public class CellTests
     public void AsFloat_SetsValueAndType()
     {
         var cell = new oCell(1, 1);
-        var result = cell.AsFloat<float>(42.5f);
+        var result = cell.AsFloat(42.5);
 
         Assert.Equal("42.5", result.Value);
         Assert.Equal(CellValueType.Float, result.ValueType);

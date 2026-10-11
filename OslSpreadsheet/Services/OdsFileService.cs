@@ -22,7 +22,7 @@ namespace OslSpreadsheet.Services
 
             try
             {
-                var (content, hasDateOnly, hasDateTime) = GenerateContentFile(workbook);
+                var (content, hasDateOnly, hasDateTime, customDataStyles) = GenerateContentFile(workbook);
                 var meta = GenerateMetaFile(workbook);
                 var style = GenerateStyleFile(workbook);
 
@@ -49,7 +49,7 @@ namespace OslSpreadsheet.Services
                     new InMemoryFile()
                     {
                         FileName = "content.xml",
-                        Content = InjectOdsDateStyles(await XmlService.ConvertToXmlAsync(content), hasDateOnly, hasDateTime)
+                        Content = InjectOdsDataStyles(await XmlService.ConvertToXmlAsync(content), hasDateOnly, hasDateTime, customDataStyles)
                     },
                     new InMemoryFile()
                     {
@@ -82,47 +82,88 @@ namespace OslSpreadsheet.Services
             return output;
         }
 
-        public async Task<oWorkbook> GenerateModel(byte[] file)
+        public async Task<oWorkbook> GenerateModel(byte[] file, OoxSpreadsheet.ImportOptions options)
         {
             oWorkbook workbook = new();
 
             using var ms = new MemoryStream(file);
             using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+            XmlService.EnforceSizeLimit(archive, options);
+            long cellCount = 0;
 
             var contentEntry = archive.GetEntry("content.xml")
-                ?? throw new InvalidOperationException("Invalid ODS file: missing content.xml");
+                ?? throw new OoxSpreadsheet.SpreadsheetImportException("The package has no content.xml, so it is not an ODS file.");
 
             XDocument doc;
             using (var contentStream = contentEntry.Open())
-                doc = await Task.Run(() => XDocument.Load(contentStream));
+                doc = await Task.Run(() => XmlService.LoadSecure(contentStream, preserveWhitespace: true));
 
             XNamespace tableNs  = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
             XNamespace officeNs = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
             XNamespace textNs   = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+
+            var cellStyles = await ReadCellStylesAsync(doc, archive);
+            var columnWidths = ReadColumnWidths(doc);
 
             foreach (var table in doc.Descendants(tableNs + "table"))
             {
                 var sheetName = table.Attribute(tableNs + "name")?.Value ?? "Sheet";
                 var sheet = workbook.AddSheet(sheetName);
 
+                // Walk the column declarations (which may be nested in header/group wrappers) in order, collecting
+                // widths and each column's default cell style, which applications use instead of styling every cell.
+                // A trailing repeated declaration is filler for the unused columns and is skipped.
+                var columnDefaultStyles = new Dictionary<int, string>();
+                var columns = table.Descendants(tableNs + "table-column").ToList();
+                int columnIndex = 0;
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    var column = columns[i];
+                    int repeated = int.TryParse(column.Attribute(tableNs + "number-columns-repeated")?.Value, out int cr) ? cr : 1;
+                    bool trailingFiller = i == columns.Count - 1 && repeated > 1;
+                    int last = Math.Min(columnIndex + repeated, columnIndex + MaxImportedWidthColumns);
+
+                    var columnStyle = column.Attribute(tableNs + "style-name")?.Value;
+                    if (!trailingFiller && columnStyle != null && columnWidths.TryGetValue(columnStyle, out double width))
+                        for (int c = columnIndex + 1; c <= last; c++)
+                            sheet.SetColumnWidth(c, width);
+
+                    var defaultCellStyle = column.Attribute(tableNs + "default-cell-style-name")?.Value;
+                    if (!trailingFiller && defaultCellStyle != null && cellStyles.ContainsKey(defaultCellStyle))
+                        for (int c = columnIndex + 1; c <= last; c++)
+                            columnDefaultStyles[c] = defaultCellStyle;
+
+                    columnIndex += repeated;
+                }
+
                 int rowIndex = 0;
 
-                foreach (var tableRow in table.Elements(tableNs + "table-row"))
+                foreach (var tableRow in GetTableRows(table, tableNs))
                 {
-                    int rowsRepeated = int.TryParse(tableRow.Attribute(tableNs + "number-rows-repeated")?.Value, out int rr) ? rr : 1;
+                    // Repeat counts are capped at the sheet limits: a few bytes can otherwise declare billions of cells
+                    int rowsRepeated = int.TryParse(tableRow.Attribute(tableNs + "number-rows-repeated")?.Value, out int rr) ? Math.Clamp(rr, 1, Math.Max(1, MaxRows - rowIndex)) : 1;
 
-                    var rowData = new List<(int col, string value, CellValueType type)>();
+                    var rowData = new List<(int col, string value, CellValueType type, string? formula, string? styleName)>();
                     int colIndex = 0;
 
-                    foreach (var cell in tableRow.Elements(tableNs + "table-cell"))
+                    foreach (var cell in tableRow.Elements().Where(e => e.Name == tableNs + "table-cell" || e.Name == tableNs + "covered-table-cell"))
                     {
-                        int colsRepeated = int.TryParse(cell.Attribute(tableNs + "number-columns-repeated")?.Value, out int cr) ? cr : 1;
+                        int colsRepeated = int.TryParse(cell.Attribute(tableNs + "number-columns-repeated")?.Value, out int cr) ? Math.Clamp(cr, 1, Math.Max(1, MaxColumns - colIndex)) : 1;
+
+                        // Covered cells are hidden by a merge; they occupy column positions but hold no visible data
+                        if (cell.Name == tableNs + "covered-table-cell")
+                        {
+                            colIndex += colsRepeated;
+                            continue;
+                        }
 
                         var valueType  = cell.Attribute(officeNs + "value-type")?.Value;
-                        var textValue  = cell.Element(textNs + "p")?.Value;
+                        var textValue  = GetCellText(cell, textNs);
                         var numericValue = cell.Attribute(officeNs + "value")?.Value;
                         var booleanValue = cell.Attribute(officeNs + "boolean-value")?.Value;
-                        bool hasContent = valueType != null || textValue != null;
+                        var formulaValue = cell.Attribute(tableNs + "formula")?.Value;
+                        var formula = string.IsNullOrEmpty(formulaValue) ? null : FormulaTranslator.FromOpenFormula(formulaValue);
+                        bool hasContent = valueType != null || textValue != null || formula != null;
 
                         if (hasContent)
                         {
@@ -140,10 +181,11 @@ namespace OslSpreadsheet.Services
                                 var dateValue = cell.Attribute(officeNs + "date-value")?.Value;
                                 cellValue = dateValue ?? textValue ?? "";
                             }
-                            else if (valueType == "float")
+                            else if (valueType is "float" or "percentage" or "currency")
                             {
+                                // office:value holds the actual number; the paragraph text is only the formatted display (e.g. "1,234.50", "25%", "$9.99")
                                 cellType = CellValueType.Float;
-                                cellValue = textValue ?? numericValue ?? "";
+                                cellValue = numericValue ?? textValue ?? "";
                             }
                             else
                             {
@@ -151,10 +193,11 @@ namespace OslSpreadsheet.Services
                                 cellValue = textValue ?? numericValue ?? "";
                             }
 
+                            var styleName = cell.Attribute(tableNs + "style-name")?.Value;
                             for (int i = 0; i < colsRepeated; i++)
                             {
                                 colIndex++;
-                                rowData.Add((colIndex, cellValue, cellType));
+                                rowData.Add((colIndex, cellValue, cellType, formula, styleName));
                             }
                         }
                         else
@@ -169,13 +212,29 @@ namespace OslSpreadsheet.Services
                         continue;
                     }
 
+                    cellCount += (long)rowsRepeated * rowData.Count;
+                    if (cellCount > options.MaxCells)
+                        throw new OoxSpreadsheet.ImportLimitExceededException(
+                            $"The file expands to more than {options.MaxCells:N0} cells, the import limit (ImportOptions.MaxCells).");
+
                     for (int r = 0; r < rowsRepeated; r++)
                     {
                         rowIndex++;
-                        foreach (var (col, value, type) in rowData)
+                        foreach (var (col, value, type, formula, styleName) in rowData)
                         {
                             var oCell = sheet.AddCell(rowIndex, col, value);
                             oCell.ValueType = type;
+                            oCell.Formula = formula;
+                            var effectiveStyleName = styleName ?? (columnDefaultStyles.TryGetValue(col, out var columnDefault) ? columnDefault : null);
+
+                            if (effectiveStyleName != null && cellStyles.TryGetValue(effectiveStyleName, out var cellStyle))
+                            {
+                                var style = cellStyle.Clone();
+                                if (style.NumberFormat != null && IsDefaultFormat(style.NumberFormat, type))
+                                    style.NumberFormat = null;
+                                if (!style.IsDefault)
+                                    oCell.Style = style;
+                            }
                         }
                     }
                 }
@@ -186,7 +245,7 @@ namespace OslSpreadsheet.Services
             {
                 XDocument settingsDoc;
                 using (var settingsStream = settingsEntry.Open())
-                    settingsDoc = await Task.Run(() => XDocument.Load(settingsStream));
+                    settingsDoc = await Task.Run(() => XmlService.LoadSecure(settingsStream));
 
                 XNamespace configNs = "urn:oasis:names:tc:opendocument:xmlns:config:1.0";
                 foreach (var entry in settingsDoc.Descendants(configNs + "config-item-map-named")
@@ -233,11 +292,11 @@ namespace OslSpreadsheet.Services
             return workbook;
         }
 
-        private (ODContent content, bool hasDateOnly, bool hasDateTime) GenerateContentFile(oWorkbook workbook)
+        private (ODContent content, bool hasDateOnly, bool hasDateTime, List<string> customDataStyles) GenerateContentFile(oWorkbook workbook)
         {
             var file = new ODContent();
 
-            var cellStyleMap = BuildOdsCellStyles(workbook, file, out bool hasDateOnly, out bool hasDateTime);
+            var cellStyleMap = BuildOdsCellStyles(workbook, file, out bool hasDateOnly, out bool hasDateTime, out var customDataStyles);
 
             foreach (var s in workbook.Sheets)
             {
@@ -273,7 +332,7 @@ namespace OslSpreadsheet.Services
                             {
                                 Name = colStyleName,
                                 Family = "table-column",
-                                tableColumnProperties = new() { ColumnWidth = $"{CharsToOdsCm(width)}cm" }
+                                tableColumnProperties = new() { ColumnWidth = $"{CharsToOdsCm(width).ToString(System.Globalization.CultureInfo.InvariantCulture)}cm" }
                             });
                             table.tableColumns.Add(new ODContent.Table.TableColumn() { StyleName = colStyleName, NumberColumnsRepeated = null });
                         }
@@ -299,24 +358,13 @@ namespace OslSpreadsheet.Services
 
                         for (int c = 1; c <= colCount; c++)
                         {
-                            var cell = s.Cells.FirstOrDefault(x => x.Row == r && x.Column == c);
+                            var cell = s.GetCell(r, c);
 
                             if (cell != null)
                             {
                                 var cellStyleName = "ce1";
-                                if (cell.ValueType == CellValueType.DateTime)
-                                {
-                                    var datePrefix = IsDateOnly(cell.Value) ? "do|" : "dt|";
-                                    var visualKey = cell.Style != null ? GetStyleKey(cell.Style) : "";
-                                    if (cellStyleMap.TryGetValue($"{datePrefix}{visualKey}", out var mapped))
-                                        cellStyleName = mapped;
-                                }
-                                else if (cell.Style != null)
-                                {
-                                    var key = GetStyleKey(cell.Style);
-                                    if (cellStyleMap.TryGetValue(key, out var mapped))
-                                        cellStyleName = mapped;
-                                }
+                                if (CellStyleMapKey(cell) is string mapKey && cellStyleMap.TryGetValue(mapKey, out var mapped))
+                                    cellStyleName = mapped;
 
                                 var tableCell = new ODContent.Table.TableRow.TableCell()
                                 {
@@ -326,8 +374,12 @@ namespace OslSpreadsheet.Services
 
                                 if (cell.ValueType == CellValueType.Float || cell.ValueType == CellValueType.Int64)
                                 {
-                                    tableCell.ValueType = "float";
+                                    // Percentage and currency formats have their own ODS value types
+                                    var formatCode = CustomFormatCode(cell);
+                                    tableCell.ValueType = (formatCode != null ? NumberFormatTranslator.OdsValueType(formatCode) : null) ?? "float";
                                     tableCell.NumericValue = cell.Value;
+                                    if (tableCell.ValueType == "currency")
+                                        tableCell.Currency = NumberFormatTranslator.CurrencyCode(NumberFormatTranslator.Parse(formatCode!).CurrencySymbol);
                                 }
                                 else if (cell.ValueType == CellValueType.Boolean)
                                 {
@@ -342,6 +394,21 @@ namespace OslSpreadsheet.Services
                                 else
                                 {
                                     tableCell.ValueType = "string";
+                                }
+
+                                if (FormulaTranslator.Normalize(cell.Formula) is string formula)
+                                {
+                                    tableCell.Formula = FormulaTranslator.ToOpenFormula(formula);
+
+                                    // Without a cached result, leave the cell untyped so the application calculates it on load
+                                    if (string.IsNullOrEmpty(cell.Value))
+                                    {
+                                        tableCell.ValueType = null;
+                                        tableCell.NumericValue = null;
+                                        tableCell.BooleanValue = null;
+                                        tableCell.DateValue = null;
+                                        tableCell.TextValue = null;
+                                    }
                                 }
 
                                 tableRow.Cells.Add(tableCell);
@@ -416,7 +483,7 @@ namespace OslSpreadsheet.Services
                 file.body.spreadsheet.databaseRanges.Ranges = dbRanges;
             }
 
-            return (file, hasDateOnly, hasDateTime);
+            return (file, hasDateOnly, hasDateTime, customDataStyles);
         }
 
         /// <summary>
@@ -473,40 +540,49 @@ namespace OslSpreadsheet.Services
         private const string OdsDateStyleName = "NDdate";
         private const string OdsDateTimeStyleName = "NDdatetime";
 
-        private static Dictionary<string, string> BuildOdsCellStyles(oWorkbook workbook, ODContent file, out bool hasDateOnly, out bool hasDateTime)
+        private static Dictionary<string, string> BuildOdsCellStyles(oWorkbook workbook, ODContent file, out bool hasDateOnly, out bool hasDateTime, out List<string> customDataStyles)
         {
             var map = new Dictionary<string, string>();
             var nextIndex = 2;
             hasDateOnly = false;
             hasDateTime = false;
 
+            // One data style per distinct format code, named N100, N101, ...
+            var dataStyleNames = new Dictionary<string, string>();
+            customDataStyles = new List<string>();
+
             foreach (var sheet in workbook.Sheets)
                 foreach (var cell in sheet.Cells)
                 {
                     var cs = cell.Style ?? new CellStyle();
-                    var visualKey = cell.Style != null ? GetStyleKey(cs) : null;
-                    string? datePrefix = null;
+                    var mapKey = CellStyleMapKey(cell);
+                    if (mapKey == null) continue;
 
-                    if (cell.ValueType == CellValueType.DateTime)
+                    var formatCode = CustomFormatCode(cell);
+                    if (formatCode == null && cell.ValueType == CellValueType.DateTime)
                     {
-                        bool dateOnly = IsDateOnly(cell.Value);
-                        datePrefix = dateOnly ? "do|" : "dt|";
-                        if (dateOnly) hasDateOnly = true; else hasDateTime = true;
+                        if (IsDateOnly(cell.Value)) hasDateOnly = true; else hasDateTime = true;
                     }
 
-                    var mapKey = datePrefix != null
-                        ? $"{datePrefix}{visualKey ?? ""}"
-                        : visualKey;
-
-                    if (mapKey == null) continue;
                     if (map.ContainsKey(mapKey)) continue;
 
                     var name = $"ce{nextIndex++}";
                     map[mapKey] = name;
 
-                    var dataStyleName = datePrefix == "do|" ? OdsDateStyleName
-                        : datePrefix == "dt|" ? OdsDateTimeStyleName
-                        : "N0";
+                    string dataStyleName;
+                    if (formatCode != null)
+                    {
+                        if (!dataStyleNames.TryGetValue(formatCode, out dataStyleName!))
+                        {
+                            dataStyleName = $"N{100 + dataStyleNames.Count}";
+                            dataStyleNames[formatCode] = dataStyleName;
+                            customDataStyles.Add(NumberFormatTranslator.ToOdsDataStyle(formatCode, dataStyleName)!);
+                        }
+                    }
+                    else
+                        dataStyleName = mapKey.StartsWith("do|") ? OdsDateStyleName
+                            : mapKey.StartsWith("dt|") ? OdsDateTimeStyleName
+                            : "N0";
 
                     var style = new ODContent.AutomaticStyles.Style
                     {
@@ -526,15 +602,15 @@ namespace OslSpreadsheet.Services
                             style.textProperties.TextUnderlineStyle = "solid";
                             style.textProperties.TextUnderlineWidth = "auto";
                         }
-                        if (cs.FontColor != null) style.textProperties.Color = cs.FontColor;
+                        if (cs.FontColor != null) style.textProperties.Color = Colors.Normalize(cs.FontColor);
                         if (cs.FontName != null) style.textProperties.FontName = cs.FontName;
-                        if (cs.FontSize != null) style.textProperties.FontSize = $"{cs.FontSize}pt";
+                        if (cs.FontSize != null) style.textProperties.FontSize = $"{cs.FontSize.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}pt";
                     }
 
                     if (cs.BackgroundColor != null || cs.BorderTop != null || cs.BorderBottom != null || cs.BorderLeft != null || cs.BorderRight != null || cs.WrapText)
                     {
                         style.tableCellProperties = new ODContent.AutomaticStyles.Style.TableCellStyleProperties();
-                        if (cs.BackgroundColor != null) style.tableCellProperties.BackgroundColor = cs.BackgroundColor;
+                        if (cs.BackgroundColor != null) style.tableCellProperties.BackgroundColor = Colors.Normalize(cs.BackgroundColor);
                         if (cs.BorderTop != null) style.tableCellProperties.BorderTop = FormatOdsBorder(cs.BorderTop);
                         if (cs.BorderBottom != null) style.tableCellProperties.BorderBottom = FormatOdsBorder(cs.BorderBottom);
                         if (cs.BorderLeft != null) style.tableCellProperties.BorderLeft = FormatOdsBorder(cs.BorderLeft);
@@ -549,14 +625,21 @@ namespace OslSpreadsheet.Services
         }
 
         private static bool IsDateOnly(string value) =>
-            DateTime.TryParse(value, out var dt) && dt.TimeOfDay == TimeSpan.Zero && !value.Contains('T');
+            DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt) && dt.TimeOfDay == TimeSpan.Zero && !value.Contains('T');
 
-        private static byte[] InjectOdsDateStyles(byte[] contentXml, bool hasDateOnly, bool hasDateTime)
+        /// <summary>
+        /// Inserts the data style elements (default date styles and custom number formats) into office:automatic-styles.
+        /// They are written as raw XML because the XmlSerializer content model has no classes for number:*-style elements.
+        /// </summary>
+        private static byte[] InjectOdsDataStyles(byte[] contentXml, bool hasDateOnly, bool hasDateTime, List<string> customDataStyles)
         {
-            if (!hasDateOnly && !hasDateTime) return contentXml;
+            if (!hasDateOnly && !hasDateTime && customDataStyles.Count == 0) return contentXml;
 
             var xml = Encoding.UTF8.GetString(contentXml);
             var sb = new StringBuilder();
+
+            foreach (var dataStyle in customDataStyles)
+                sb.Append(dataStyle);
 
             if (hasDateOnly)
             {
@@ -591,7 +674,26 @@ namespace OslSpreadsheet.Services
         }
 
         private static string GetStyleKey(CellStyle s) =>
-            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}";
+            $"{s.Bold}|{s.Italic}|{s.Underline}|{s.FontColor}|{s.BackgroundColor}|{s.FontName}|{s.FontSize}|{s.WrapText}|{EdgeKey(s.BorderTop)}|{EdgeKey(s.BorderBottom)}|{EdgeKey(s.BorderLeft)}|{EdgeKey(s.BorderRight)}|{s.NumberFormat}";
+
+        /// <summary>
+        /// A cell's NumberFormat when it is set and can be expressed as an ODS data style; otherwise null and the defaults apply.
+        /// </summary>
+        private static string? CustomFormatCode(oCell cell) =>
+            !string.IsNullOrEmpty(cell.Style?.NumberFormat) && NumberFormatTranslator.ToOdsDataStyle(cell.Style.NumberFormat, "x") != null
+                ? cell.Style.NumberFormat
+                : null;
+
+        /// <summary>
+        /// Key into the cell style map: the visual style key, prefixed by the default date style kind when no custom format applies.
+        /// </summary>
+        private static string? CellStyleMapKey(oCell cell)
+        {
+            var visualKey = cell.Style != null ? GetStyleKey(cell.Style) : null;
+            if (cell.ValueType == CellValueType.DateTime && CustomFormatCode(cell) == null)
+                return (IsDateOnly(cell.Value) ? "do|" : "dt|") + (visualKey ?? "");
+            return visualKey;
+        }
 
         private static string EdgeKey(CellBorder? b) =>
             b == null ? "" : $"{b.Style}:{b.Color}";
@@ -608,6 +710,228 @@ namespace OslSpreadsheet.Services
                 col /= 26;
             }
             return result;
+        }
+
+        private const int MaxRows = 1_048_576;
+        private const int MaxColumns = 16_384;
+
+        // A column declaration can repeat for the whole sheet (LibreOffice writes 1024 or more); cap how many widths one sets
+        private const int MaxImportedWidthColumns = 1024;
+
+        /// <summary>
+        /// Maps each table-column style name to its width in characters. The library's own default column width is skipped
+        /// so a round-trip of a sheet with no explicit widths leaves ColumnWidths empty.
+        /// </summary>
+        private static Dictionary<string, double> ReadColumnWidths(XDocument contentDoc)
+        {
+            XNamespace styleNs = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
+            var result = new Dictionary<string, double>();
+
+            foreach (var style in contentDoc.Descendants(styleNs + "style").Where(s => (string?)s.Attribute(styleNs + "family") == "table-column"))
+            {
+                var name = (string?)style.Attribute(styleNs + "name");
+                var widthText = (string?)style.Element(styleNs + "table-column-properties")?.Attribute(styleNs + "column-width");
+                if (name == null || widthText == null) continue;
+
+                var cm = ParseLengthCm(widthText);
+                if (cm == null) continue;
+
+                var chars = Math.Round(cm.Value * (8.43 / 1.69333333333333), 2);
+                if (Math.Abs(chars - 8.43) < 0.01) continue; // the library's default column
+
+                result[name] = chars;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Parses an ODF length ("1.69cm", "0.5in", "12pt", "20mm") to centimeters.
+        /// </summary>
+        private static double? ParseLengthCm(string text)
+        {
+            var units = new (string Unit, double ToCm)[] { ("cm", 1), ("mm", 0.1), ("in", 2.54), ("pt", 2.54 / 72), ("pc", 2.54 / 6) };
+            foreach (var (unit, toCm) in units)
+                if (text.EndsWith(unit, StringComparison.Ordinal)
+                    && double.TryParse(text[..^unit.Length], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value))
+                    return value * toCm;
+            return null;
+        }
+
+        /// <summary>
+        /// Builds a CellStyle for each table-cell automatic style from its text properties, cell properties, and data style.
+        /// Styles that resolve to the default are omitted. Data styles may live in content.xml or styles.xml.
+        /// </summary>
+        private static async Task<Dictionary<string, CellStyle>> ReadCellStylesAsync(XDocument contentDoc, ZipArchive archive)
+        {
+            XNamespace styleNs = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
+            XNamespace numberNs = "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0";
+            XNamespace foNs = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
+
+            var dataStyles = new Dictionary<string, XElement>();
+            void CollectDataStyles(XDocument document)
+            {
+                foreach (var ds in document.Descendants().Where(e => e.Name.Namespace == numberNs && e.Name.LocalName.EndsWith("-style", StringComparison.Ordinal)))
+                    if ((string?)ds.Attribute(styleNs + "name") is string name)
+                        dataStyles[name] = ds;
+            }
+
+            CollectDataStyles(contentDoc);
+            var stylesEntry = archive.GetEntry("styles.xml");
+            if (stylesEntry != null)
+            {
+                using var stylesStream = stylesEntry.Open();
+                CollectDataStyles(await Task.Run(() => XmlService.LoadSecure(stylesStream, preserveWhitespace: true)));
+            }
+
+            var result = new Dictionary<string, CellStyle>();
+            foreach (var cellStyle in contentDoc.Descendants(styleNs + "style").Where(s => (string?)s.Attribute(styleNs + "family") == "table-cell"))
+            {
+                var name = (string?)cellStyle.Attribute(styleNs + "name");
+                if (name == null) continue;
+
+                var style = new CellStyle();
+
+                var text = cellStyle.Element(styleNs + "text-properties");
+                if (text != null)
+                {
+                    style.Bold = (string?)text.Attribute(foNs + "font-weight") == "bold";
+                    style.Italic = (string?)text.Attribute(foNs + "font-style") == "italic";
+                    style.Underline = (string?)text.Attribute(styleNs + "text-underline-style") is string u && u != "none";
+                    style.FontColor = NormalizeColor((string?)text.Attribute(foNs + "color"));
+                    style.FontName = (string?)text.Attribute(styleNs + "font-name");
+                    var size = (string?)text.Attribute(foNs + "font-size");
+                    if (size != null && size.EndsWith("pt", StringComparison.Ordinal)
+                        && double.TryParse(size[..^2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double pt))
+                        style.FontSize = pt;
+                }
+
+                var cellProps = cellStyle.Element(styleNs + "table-cell-properties");
+                if (cellProps != null)
+                {
+                    style.BackgroundColor = NormalizeColor((string?)cellProps.Attribute(foNs + "background-color"));
+                    style.WrapText = (string?)cellProps.Attribute(foNs + "wrap-option") == "wrap";
+
+                    // fo:border applies to all four sides unless a side-specific attribute overrides it
+                    var all = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border"));
+                    style.BorderTop = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border-top")) ?? all?.Clone();
+                    style.BorderBottom = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border-bottom")) ?? all?.Clone();
+                    style.BorderLeft = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border-left")) ?? all?.Clone();
+                    style.BorderRight = ParseOdsBorder((string?)cellProps.Attribute(foNs + "border-right")) ?? all?.Clone();
+                }
+
+                var dataStyleName = (string?)cellStyle.Attribute(styleNs + "data-style-name");
+                if (dataStyleName != null && dataStyles.TryGetValue(dataStyleName, out var dataStyle)
+                    && NumberFormatTranslator.FromOdsDataStyle(dataStyle) is string code)
+                    style.NumberFormat = code;
+
+                if (!style.IsDefault)
+                    result[name] = style;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Returns a "#RRGGBB" color, or null for "transparent" and anything that isn't a hex color.
+        /// </summary>
+        private static string? NormalizeColor(string? color) =>
+            color != null && color.StartsWith('#') && color.Length == 7 ? color.ToUpperInvariant() : null;
+
+        /// <summary>
+        /// Parses an ODF border such as "0.75pt solid #000000". Returns null for "none" or an unparseable value.
+        /// </summary>
+        private static CellBorder? ParseOdsBorder(string? border)
+        {
+            if (string.IsNullOrEmpty(border) || border == "none") return null;
+
+            var parts = border.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var widthCm = parts.Select(ParseLengthCm).FirstOrDefault(w => w != null);
+            var widthPt = (widthCm ?? 0) / 2.54 * 72;
+            var style = widthPt switch
+            {
+                <= 1.0 => BorderStyle.Thin,
+                <= 2.0 => BorderStyle.Medium,
+                _ => BorderStyle.Thick
+            };
+
+            return new CellBorder { Style = style, Color = parts.Select(NormalizeColor).FirstOrDefault(c => c != null) };
+        }
+
+        /// <summary>
+        /// The library's own default date formats aren't reported as a NumberFormat on import, so a round-trip leaves Style null.
+        /// </summary>
+        private static bool IsDefaultFormat(string code, CellValueType valueType) =>
+            valueType == CellValueType.DateTime && code is NumberFormatTranslator.DefaultDateCode or NumberFormatTranslator.DefaultDateTimeCode;
+
+        /// <summary>
+        /// Returns a cell's text content, or null if it has no paragraphs. Paragraphs are joined with line feeds,
+        /// and the ODF whitespace elements (text:s, text:tab, text:line-break) are expanded to the characters they represent.
+        /// </summary>
+        private static string? GetCellText(XElement cell, XNamespace textNs)
+        {
+            var paragraphs = cell.Elements(textNs + "p").ToList();
+            if (paragraphs.Count == 0)
+                return null;
+
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < paragraphs.Count; i++)
+            {
+                if (i > 0)
+                    sb.Append('\n');
+                AppendText(paragraphs[i], textNs, sb);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Appends a paragraph's text. Walks nested spans and links with an explicit stack so a deeply nested
+        /// (possibly malicious) document can't overflow the call stack.
+        /// </summary>
+        private static void AppendText(XElement element, XNamespace textNs, System.Text.StringBuilder sb)
+        {
+            var stack = new Stack<XNode>();
+            foreach (var node in element.Nodes().Reverse())
+                stack.Push(node);
+
+            while (stack.Count > 0)
+            {
+                var node = stack.Pop();
+                if (node is XText text)
+                    sb.Append(text.Value);
+                else if (node is XElement child)
+                {
+                    if (child.Name == textNs + "s")
+                        sb.Append(' ', int.TryParse(child.Attribute(textNs + "c")?.Value, out int count) ? Math.Clamp(count, 0, MaxColumns) : 1);
+                    else if (child.Name == textNs + "tab")
+                        sb.Append('\t');
+                    else if (child.Name == textNs + "line-break")
+                        sb.Append('\n');
+                    else
+                        foreach (var inner in child.Nodes().Reverse()) // text:span, text:a, etc.
+                            stack.Push(inner);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Returns a table's rows in document order, including rows nested inside
+        /// table-header-rows, table-rows, and table-row-group containers (which may themselves be nested).
+        /// </summary>
+        private static IEnumerable<XElement> GetTableRows(XElement container, XNamespace tableNs)
+        {
+            // Explicit stack rather than recursion: row groups can nest arbitrarily deep in a crafted file
+            var stack = new Stack<XElement>();
+            foreach (var child in container.Elements().Reverse())
+                stack.Push(child);
+
+            while (stack.Count > 0)
+            {
+                var element = stack.Pop();
+                if (element.Name == tableNs + "table-row")
+                    yield return element;
+                else if (element.Name == tableNs + "table-header-rows" || element.Name == tableNs + "table-rows" || element.Name == tableNs + "table-row-group")
+                    foreach (var child in element.Elements().Reverse())
+                        stack.Push(child);
+            }
         }
 
         private static (string sheetName, int row, int col) ParseOdsCellAddress(string address)
@@ -642,7 +966,7 @@ namespace OslSpreadsheet.Services
                 BorderStyle.Thick => "2.5pt",
                 _ => "0.75pt"
             };
-            var color = b.Color ?? "#000000";
+            var color = Colors.Normalize(b.Color) ?? "#000000";
             return $"{width} solid {color}";
         }
 

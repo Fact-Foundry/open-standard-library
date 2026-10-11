@@ -57,6 +57,59 @@ public class SpreadsheetTests
     }
 
     [Fact]
+    public void GetCell_ReturnsCellAtPositionOrNull()
+    {
+        var sheet = new oSpreadsheet(1, "Sheet1");
+        sheet.AddCell(2, 3, "Value");
+
+        Assert.Equal("Value", sheet.GetCell(2, 3)?.Value);
+        Assert.Null(sheet.GetCell(3, 2));
+    }
+
+    /// <summary>
+    /// Cells added directly to the Cells list (bypassing AddCell) are still found, and AddCell still replaces them.
+    /// </summary>
+    [Fact]
+    public void GetCell_SeesCellsAddedDirectlyToList()
+    {
+        var sheet = new oSpreadsheet(1, "Sheet1");
+        sheet.Cells.Add(new oCell(1, 1) { Value = "Direct" });
+
+        Assert.Equal("Direct", sheet.GetCell(1, 1)?.Value);
+
+        sheet.AddCell(1, 1, "Replaced");
+
+        Assert.Single(sheet.Cells);
+        Assert.Equal("Replaced", sheet.GetCell(1, 1)?.Value);
+    }
+
+    /// <summary>
+    /// Large sheets are handled in linear time: 50,000 cells add, generate, and import without issue.
+    /// </summary>
+    [Fact]
+    public async Task LargeSheet_GeneratesAndImports()
+    {
+        using var spreadsheet = new OoxSpreadsheet.Spreadsheet();
+        var sheet = spreadsheet.Workbook.AddSheet("Big");
+        for (int r = 1; r <= 5000; r++)
+            for (int c = 1; c <= 10; c++)
+                sheet.AddCell(r, c, (r * c).ToString(), CellValueType.Float);
+
+        var xlsx = await spreadsheet.GenerateXlsxFileAsync();
+        var ods = await spreadsheet.GenerateOdsFileAsync();
+
+        using var xlsxImporter = new OoxSpreadsheet.Spreadsheet();
+        using var odsImporter = new OoxSpreadsheet.Spreadsheet();
+        var fromXlsx = (await xlsxImporter.ImportXlsxFileAsync(xlsx)).Sheets[0];
+        var fromOds = (await odsImporter.ImportOdsFileAsync(ods)).Sheets[0];
+
+        Assert.Equal(50000, fromXlsx.Cells.Count);
+        Assert.Equal(50000, fromOds.Cells.Count);
+        Assert.Equal("50000", fromXlsx.GetCell(5000, 10)?.Value);
+        Assert.Equal("50000", fromOds.GetCell(5000, 10)?.Value);
+    }
+
+    [Fact]
     public void RowCount_EmptySheet_ReturnsZero()
     {
         var sheet = new oSpreadsheet(1, "Sheet1");

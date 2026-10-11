@@ -70,7 +70,7 @@ Formula error values are split by meaning. `#REF!` and `#NAME?` mean the formula
 var options = new ValidationOptions
 {
     MaxIssues = 100,                          // Stop after this many issues (default 100)
-    MaxUncompressedBytes = 512L * 1024 * 1024, // Reject larger XLSX/ODS packages without decompressing (zip-bomb guard)
+    MaxUncompressedBytes = 64L * 1024 * 1024,  // Reject larger XLSX/ODS packages without decompressing (zip-bomb guard)
     Delimiter = ColumnDelimeter.Tab,          // Delimited files: null (default) infers it from the extension, else comma
     Encoding = FileEncoding.UTF8,             // Delimited files: expected text encoding
     RequireConsistentColumnCount = true       // Delimited files: rows with a different field count are errors (false = warnings)
@@ -105,9 +105,61 @@ throw new InvalidOperationException("The model did not produce a valid file.");
 
 If your tool protocol prefers structured data, serialize `result.Issues` (for example with `System.Text.Json`) instead of using `ToString()`.
 
+## Validating a Workbook Before Generating
+
+The checks above run on a finished file. `oWorkbook.Validate()` runs a matching set of checks on the in-memory model, so problems are caught before any file exists:
+
+```csharp
+var result = spreadsheet.Workbook.Validate(ValidationFileFormat.Xlsx); // the format you intend to generate
+
+if (!result.IsValid)
+    Console.WriteLine(result); // "The workbook is NOT valid for XLSX output (1 error, 0 warnings): ..."
+```
+
+`GenerateXlsxFileAsync()`, `GenerateOdsFileAsync()`, and `GenerateCsvFileAsync()` call this automatically for their format and throw `InvalidWorkbookException` if there are errors. The exception's `Result` property is the same `ValidationResult`, and its message is the plain-text report. Warnings don't stop generation.
+
+Rules are prefixed `WB_`:
+
+| Code | Severity | Check |
+|------|----------|-------|
+| `WB_NO_SHEETS` | Error | The workbook has no sheets |
+| `WB_SHEET_NAME_INVALID` | Error | Blank name, or (XLSX) longer than 31 characters or containing `[ ] : * ? / \`, or (ODS) containing `[ ] * ? : / \`. Not checked for delimited output |
+| `WB_SHEET_NAME_DUPLICATE` | Error | Two sheets with the same name, ignoring case |
+| `WB_CELL_POSITION_INVALID` | Error | Row or column below 1, row above 1,048,576, or column above 16,384 |
+| `WB_CELL_NOT_NUMERIC` | Error | A `Float` value that isn't a plain decimal, or an `Int64` value that isn't a whole number. Formula cells may be empty |
+| `WB_CELL_NOT_BOOLEAN` | Error | A `Boolean` value other than `true`, `false`, `1`, or `0` |
+| `WB_CELL_NOT_DATETIME` | Error | A `DateTime` value that doesn't parse as an ISO 8601 date |
+| `WB_TEXT_TOO_LONG` | Error for XLSX, Warning for ODS | Text longer than 32,767 characters |
+| `WB_TEXT_CONTROL_CHAR` | Error | A control character (other than tab, line feed, or carriage return) that XML can't store |
+| `WB_FORMULA_UNKNOWN_SHEET` | Error | A formula refers to a sheet that isn't in the workbook |
+| `WB_FORMULA_DANGEROUS` | Warning (Error with `TreatDangerousFormulasAsErrors`) | A formula calling a function that reaches outside the spreadsheet, or using DDE syntax; see [Formula checks](#formula-checks) |
+| `WB_FORMULA_EXTERNAL_REFERENCE` | Warning | A formula referring to another workbook |
+| `WB_COLOR_INVALID` | Error | A `FontColor`, `BackgroundColor`, or border `Color` that isn't six hex digits (`#FF0000`; the `#` is optional) |
+| `WB_NUMBER_FORMAT_INVALID` | Error | A `NumberFormat` containing a control character |
+| `WB_NUMBER_FORMAT_UNSUPPORTED` | Warning (ODS only) | A `NumberFormat` that can't be translated to an ODS data style; the cell falls back to the default format |
+| `WB_FREEZE_INVALID` / `WB_AUTOFILTER_INVALID` | Error | Negative freeze counts, or an auto-filter range whose end is before its start |
+| `WB_DELIMITED_MULTIPLE_SHEETS` | Warning | More than one sheet when generating a delimited file; only the first is written |
+| `WB_DELIMITED_FORMULA_LIKE_VALUE` | Warning | A text value that a spreadsheet application would evaluate as a formula when opening the delimited file (starts with `=` `+` `-` `@`, tab, or CR and isn't a plain number). Reported only while `oWorkbook.EscapeFormulaLikeValues` is off. See [Formula Injection](Working-with-Delimited-Files.md#formula-injection) |
+
 ## What Is Checked
 
-Validation is structural. It checks the packaging, XML, references, and cell values that spreadsheet applications rely on to open a file cleanly. It is not a full XML Schema validation of every element and attribute. It also doesn't evaluate formulas: formula checks are limited to `#REF!` in formula text and cached error values.
+Validation is structural. It checks the packaging, XML, references, and cell values that spreadsheet applications rely on to open a file cleanly. It is not a full XML Schema validation of every element and attribute.
+
+### Formula checks
+
+Formulas are not evaluated. The validator checks:
+
+| Code | Severity | Check |
+|------|----------|-------|
+| `XLSX_FORMULA_UNKNOWN_SHEET` / `ODS_FORMULA_UNKNOWN_SHEET` | Error | The formula refers to a sheet that doesn't exist, e.g. `=Sales!A1` with no "Sales" sheet. References into other workbooks are ignored. |
+| `XLSX_FORMULA_BROKEN_REFERENCE` / `ODS_FORMULA_BROKEN_REFERENCE` | Error | The formula text contains `#REF!` |
+| `XLSX_FORMULA_DANGEROUS` / `ODS_FORMULA_DANGEROUS` | Warning (Error with `TreatDangerousFormulasAsErrors`) | The formula calls a function that reaches outside the spreadsheet (`WEBSERVICE`, `FILTERXML`, `HYPERLINK`, `RTD`, `DDE`, `CALL`, `REGISTER`, `EXEC`, `EVALUATE`, `IMPORTXML`/`IMPORTDATA`/`IMPORTHTML`/`IMPORTFEED`/`IMPORTRANGE`, `IMAGE`, `ENCODEURL`) or uses DDE syntax (`=cmd\|'/c calc'!A0`). Function names inside string literals are ignored |
+| `XLSX_FORMULA_EXTERNAL_REFERENCE` / `ODS_FORMULA_EXTERNAL_REFERENCE` | Warning | The formula refers to another workbook (`[1]Sheet1!A1`, `'C:\path\[Book.xlsx]Sheet1'!A1`) |
+| `XLSX_CELL_FORMULA_ERROR` / `ODS_CELL_FORMULA_ERROR` | Error for `#REF!` and `#NAME?`; Warning otherwise | The file stores an error as the cell's cached result |
+
+Formulas in a file from an untrusted source are the main way a spreadsheet can act on the reader's machine: `WEBSERVICE` and the `IMPORT*` functions send cell contents to a URL, `HYPERLINK` opens a link, and DDE syntax or `CALL` can launch programs. The dangerous-formula check is a warning by default because these functions have legitimate uses; set `ValidationOptions.TreatDangerousFormulasAsErrors = true` to make such files fail validation. The same check runs on the workbook before generating (`WB_FORMULA_DANGEROUS`, `WB_FORMULA_EXTERNAL_REFERENCE`).
+
+It does not check argument counts or whether a referenced range is sensible for the formula; if your files follow a known layout, check those against your own specification. Cached-result checks only apply to files that store results. Files generated by this library store none unless you set them, so for those only the formula-text checks apply.
 
 ### XLSX
 
@@ -136,3 +188,4 @@ Validation is structural. It checks the packaging, XML, references, and cell val
 - Comma-delimited files follow RFC 4180 quoting. Quoted values must be closed, and quotes inside them must be doubled. Tab- and pipe-delimited files may optionally use the same quoting. ASCII-delimited files use the unit (0x1F) and record (0x1E) separators with no quoting.
 - Every row has the same number of fields as the first row
 - Warnings for blank lines between rows, stray quotes in unquoted values, values longer than 32,767 characters, and files that appear to use a different delimiter
+- `CSV_FORMULA_LIKE_VALUE` warning for values a spreadsheet application would evaluate as formulas (starting with `=` `+` `-` `@`, tab, or CR and not a plain number), the vehicle for CSV injection

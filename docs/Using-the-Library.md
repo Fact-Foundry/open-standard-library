@@ -2,6 +2,12 @@
 
 This library uses a Workbook model created in the Spreadsheet service that is implemented through the interface `ISpreadsheet`.
 
+You can create it directly with `new Spreadsheet()`, or register it with your dependency injection container yourself (the library does not include a registration extension):
+
+```csharp
+services.AddTransient<ISpreadsheet, Spreadsheet>();
+```
+
 ```csharp
 await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 {
@@ -27,9 +33,45 @@ await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 }
 ```
 
+The array is sized to the sheet's row and column counts. Positions with no cell contain `null`, not an empty string.
+
+## Cell Helpers
+
+`oCell` has extension methods for converting values in place:
+
+- `FromEpochSeconds()`, `FromEpochMilliseconds()`, `ToEpochSeconds()`, `ToEpochMilliseconds()` — convert between Unix epoch timestamps and ISO 8601 DateTime values (treated as UTC)
+- `AsFloat(double value)` — sets the cell's value to the number (always with a period as the decimal separator) and marks it as `Float`
+
 ## Cell Styling
 
 Cells support styling including bold, italic, underline, font color, background color, font name, font size, text wrapping, and borders (thin/medium/thick with color per edge). Styles are applied via the `CellStyle` class on `oCell.Style`.
+
+Colors are six hex digits with an optional leading `#` (`"#2196F3"` or `"2196F3"`); any other value is rejected by `Validate()` and by the Generate methods, which normalize colors before writing them.
+
+Styles are read back on import from both XLSX and ODS, so a file can be imported, changed, and generated again without losing its formatting. Only the properties `CellStyle` models are kept; alignment, fonts chosen by theme, and other formatting the library doesn't write are dropped. Cells whose formatting comes from a column default (common in files saved by LibreOffice) get it as their own `Style`. A cell with no formatting imports with `Style` null, and `CellStyle.IsDefault` tells you whether a style has any effect. ODS always stores a border color, so a border written without one comes back from an ODS file with `Color = "#000000"`.
+
+## Number Formats
+
+`CellStyle.NumberFormat` takes an Excel format code and controls how a number or date is displayed:
+
+| Code | Displays `1234.5` / `2024-01-31 13:45` as |
+|------|------|
+| `#,##0.00` | `1,234.50` |
+| `0` | `1235` |
+| `0.0%` | `25.6%` (for the value `0.256`) |
+| `"$"#,##0.00` | `$1,234.50` |
+| `#,##0.00 "EUR"` | `1,234.50 EUR` |
+| `mm/dd/yyyy` | `01/31/2024` |
+| `d-mmm-yy` | `31-Jan-24` |
+| `mmmm d, yyyy` | `January 31, 2024` |
+| `dddd` | `Wednesday` |
+| `h:mm AM/PM` | `1:45 PM` |
+| `yyyy-mm-dd hh:mm` | `2024-01-31 13:45` |
+| `@` | text as-is |
+
+XLSX stores the code directly, so any code Excel accepts works there. ODS has no format-code syntax, so the code is translated to an ODS data style. The translation supports decimals, thousands separators, percentages, currency symbols (including `[$€-407]`-style locale tags, which become a plain symbol), text literals, and date/time patterns built from `y`, `m`, `d`, `h`, `s`, and `AM/PM`. It doesn't support multiple sections (`positive;negative`), colors, conditions, scientific notation, fractions, elapsed time (`[h]:mm`), or padding characters; `workbook.Validate(ValidationFileFormat.Ods)` reports those as `WB_NUMBER_FORMAT_UNSUPPORTED` warnings and the cell falls back to the default format.
+
+On import, the format is read back into `NumberFormat` from both XLSX (including Excel's built-in formats, which files store only by id) and ODS. `DateTime` cells written without a format use the library defaults (`yyyy-mm-dd` or `yyyy-mm-dd hh:mm:ss`) and import with no `Style`.
 
 ## Freeze Panes
 
@@ -42,6 +84,52 @@ Sheets support auto filters via `SetAutoFilter()` and `SetAutoFilter(int startRo
 ## Column Width
 
 Column widths can be controlled via `SetColumnWidth(int column, double width)` and `AutoFitColumns(double minWidth, double maxWidth)` on `oSpreadsheet`.
+
+## Formulas
+
+Set `Formula` on a cell using Excel A1 syntax, such as `=SUM(A1:A10)` or `='My Data'!B2*2`. Formulas are written to and read from XLSX and ODS files; for ODS they are translated to and from OpenFormula syntax automatically. Delimited files store values only.
+
+The library does not calculate formulas. Excel and LibreOffice compute them when the file opens, but tools that only read stored values see an empty result unless you set the cell's `Value` (and `ValueType`) to the known result, which is then stored as the cached value.
+
+## Import Errors and Limits
+
+Any failure to read a file (wrong format, corrupt or truncated archive, malformed XML, or an exceeded limit) is thrown as `SpreadsheetImportException`, with the underlying parser error in `InnerException`. Catch that one type:
+
+```csharp
+try
+{
+    var workbook = await spreadsheet.ImportXlsxFileAsync(bytes);
+}
+catch (SpreadsheetImportException ex)
+{
+    // ex.Message says what went wrong; for a full report, run SpreadsheetValidator.Validate() on the same bytes
+}
+```
+
+Files from untrusted sources can be built to exhaust memory: a few hundred kilobytes can decompress to gigabytes, and an ODS file can declare a cell repeated a billion times in a single attribute. The importers apply limits from `ImportOptions` and throw `ImportLimitExceededException` (a subclass of `SpreadsheetImportException`) when a file exceeds them:
+
+```csharp
+var options = new ImportOptions
+{
+    MaxUncompressedBytes = 64L * 1024 * 1024, // Declared size of all package entries (default 64 MB)
+    MaxCells = 10_000_000                     // Cells across all sheets, after expanding repeats (default 10 million)
+};
+
+try
+{
+    var workbook = await spreadsheet.ImportXlsxFileAsync(bytes, options);
+}
+catch (ImportLimitExceededException ex)
+{
+    Console.WriteLine(ex.Message);
+}
+```
+
+Parsed XML costs roughly ten times its byte size in memory, so size `MaxUncompressedBytes` against the memory you can spare, not the files you expect. XML with a document type declaration (the vehicle for entity-expansion attacks) is rejected, since neither ODF nor OOXML allows one.
+
+## Validating Before Generating
+
+`workbook.Validate(format)` checks the model for anything that would produce an invalid file: values that don't match their `ValueType`, invalid or duplicate sheet names, out-of-range positions, control characters, and formulas that refer to missing sheets. The Generate methods run the same check and throw `InvalidWorkbookException` on errors, so an invalid file is never written. See [Validating Files](Validating-Files.md#validating-a-workbook-before-generating).
 
 ## File Type Guides
 

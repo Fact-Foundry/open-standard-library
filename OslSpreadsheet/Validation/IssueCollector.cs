@@ -42,6 +42,6 @@ namespace OslSpreadsheet.Validation
             _issues.Add(new ValidationIssue(severity, code, message, part, location, sheet, cell, row));
         }
 
-        internal ValidationResult ToResult(ValidationFileFormat format) => new(format, _issues.ToList(), Truncated);
+        internal ValidationResult ToResult(ValidationFileFormat format, string subject = "file") => new(format, _issues.ToList(), Truncated, subject);
     }
 }

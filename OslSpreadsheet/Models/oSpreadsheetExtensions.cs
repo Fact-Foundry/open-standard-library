@@ -5,15 +5,15 @@
         private static readonly DateTime UnixEpoch = new(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
         /// <summary>
-        /// Convert cell to type of float.
+        /// Sets the cell's value to a number and marks it as <see cref="CellValueType.Float"/>.
+        /// The value is written with a period as the decimal separator regardless of the current culture.
         /// </summary>
-        public static oCell AsFloat<T>(this oCell cell, float value)
+        public static oCell AsFloat(this oCell cell, double value)
         {
-            var c = cell;
-            c.Value = value.ToString();
-            c.ValueType = CellValueType.Float;
+            cell.Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            cell.ValueType = CellValueType.Float;
 
-            return c;
+            return cell;
         }
 
         /// <summary>

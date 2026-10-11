@@ -7,8 +7,6 @@ await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 {
     var workbook = spreadsheet.Workbook;
 
-    workbook.Creator = "Kevin Williams";
-
     // Create worksheets
     var sheet1 = await workbook.AddSheetAsync();
     var sheet2 = await workbook.AddSheetAsync("Stuff");
@@ -41,15 +39,30 @@ await using (var spreadsheet = host.Services.GetService<ISpreadsheet>())
 
 ## Supported Features
 
-XLSX generation and import supports:
+Document properties (`Creator`, `InitialCreator`, `CreationDate`) are not written to XLSX files; they are only used for ODS metadata.
+
+XLSX generation supports:
 
 - Multiple sheets
-- Cell value types: String, Float, Boolean
+- Cell value types: String, Float, Int64, Boolean, DateTime
 - Cell styling (bold, italic, underline, font color, background color, font name, font size, borders, text wrapping)
+- Number formats (see [Using the Library](Using-the-Library.md#number-formats))
 - Freeze panes
 - Auto filters
 - Column widths
 - Formulas
+
+XLSX import supports:
+
+- Multiple sheets
+- Cell values: String, Float, Boolean, DateTime (whole numbers are imported as Float)
+- Freeze panes
+- Auto filters, and header row detection from freeze panes or auto filters
+- Formulas, along with any cached results stored in the file
+- Cell styling and number formats
+- Column widths (explicitly set columns only)
+
+Formulas are written in Excel syntax (`=SUM(A1:A10)`), and the workbook is flagged to recalculate when opened. The library does not calculate formulas, so generated files contain no cached results unless you set the cell's `Value`. Excel and LibreOffice calculate on open; tools that only read stored values (such as pandas or file previewers) show those cells as empty.
 
 ---
 
