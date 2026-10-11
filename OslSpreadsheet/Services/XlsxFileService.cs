@@ -52,12 +52,14 @@ namespace OslSpreadsheet.Services
             return archiveStream.ToArray();
         }
 
-        public async Task<oWorkbook> GenerateModel(byte[] file)
+        public async Task<oWorkbook> GenerateModel(byte[] file, OoxSpreadsheet.ImportOptions options)
         {
             oWorkbook workbook = new();
 
             using var ms = new MemoryStream(file);
             using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+            XmlService.EnforceSizeLimit(archive, options);
+            long cellCount = 0;
 
             XNamespace mainNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
             XNamespace rNs    = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -69,7 +71,7 @@ namespace OslSpreadsheet.Services
             if (ssEntry != null)
             {
                 using var ssStream = ssEntry.Open();
-                var ssDoc = await Task.Run(() => XDocument.Load(ssStream, LoadOptions.PreserveWhitespace));
+                var ssDoc = await Task.Run(() => XmlService.LoadSecure(ssStream, preserveWhitespace: true));
                 sharedStrings = ssDoc.Descendants(mainNs + "si")
                     .Select(si => string.Concat(si.Descendants(mainNs + "t").Select(t => t.Value)))
                     .ToList();
@@ -82,7 +84,7 @@ namespace OslSpreadsheet.Services
             if (stylesEntry != null)
             {
                 using var stylesStream = stylesEntry.Open();
-                var stylesDoc = await Task.Run(() => XDocument.Load(stylesStream));
+                var stylesDoc = await Task.Run(() => XmlService.LoadSecure(stylesStream));
                 dateXfIndices = GetDateXfIndices(stylesDoc, mainNs);
                 xfStyles = GetXfStyles(stylesDoc, mainNs, GetXfFormatCodes(stylesDoc, mainNs));
             }
@@ -93,7 +95,7 @@ namespace OslSpreadsheet.Services
 
             XDocument wbDoc;
             using (var wbStream = wbEntry.Open())
-                wbDoc = await Task.Run(() => XDocument.Load(wbStream));
+                wbDoc = await Task.Run(() => XmlService.LoadSecure(wbStream));
 
             // Load workbook.xml.rels — maps rId to sheet file path
             var relsEntry = archive.GetEntry("xl/_rels/workbook.xml.rels")
@@ -101,7 +103,7 @@ namespace OslSpreadsheet.Services
 
             XDocument relsDoc;
             using (var relsStream = relsEntry.Open())
-                relsDoc = await Task.Run(() => XDocument.Load(relsStream));
+                relsDoc = await Task.Run(() => XmlService.LoadSecure(relsStream));
 
             var relationships = relsDoc.Descendants(relsNs + "Relationship")
                 .ToDictionary(r => r.Attribute("Id")!.Value, r => r.Attribute("Target")!.Value);
@@ -121,7 +123,7 @@ namespace OslSpreadsheet.Services
 
                 XDocument sheetDoc;
                 using (var sheetStream = sheetEntry.Open())
-                    sheetDoc = await Task.Run(() => XDocument.Load(sheetStream, LoadOptions.PreserveWhitespace));
+                    sheetDoc = await Task.Run(() => XmlService.LoadSecure(sheetStream, preserveWhitespace: true));
 
                 // Column widths: only columns with an explicit custom width are imported
                 foreach (var colEl in sheetDoc.Descendants(mainNs + "col"))
@@ -196,6 +198,10 @@ namespace OslSpreadsheet.Services
                                 }
                                 break;
                         }
+
+                        if (++cellCount > options.MaxCells)
+                            throw new OoxSpreadsheet.ImportLimitExceededException(
+                                $"The file has more than {options.MaxCells:N0} cells, the import limit (ImportOptions.MaxCells).");
 
                         var oCell = sheet.AddCell(rowNum, colNum, value);
                         oCell.ValueType = valueType;

@@ -13,9 +13,9 @@ namespace OslSpreadsheet.Validation
         /// <summary>
         /// Maximum combined uncompressed size, in bytes, of all entries in an XLSX or ODS package.
         /// Packages that declare a larger size are rejected without being decompressed, which protects against zip bombs.
-        /// Defaults to 512 MB.
+        /// Parsed XML costs roughly ten times its byte size in memory, so keep this well below available memory. Defaults to 64 MB.
         /// </summary>
-        public long MaxUncompressedBytes { get; set; } = 512L * 1024 * 1024;
+        public long MaxUncompressedBytes { get; set; } = 64L * 1024 * 1024;
 
         /// <summary>
         /// Delimiter expected in delimited files. When null (the default), it is inferred from the file extension

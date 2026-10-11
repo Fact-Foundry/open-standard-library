@@ -28,6 +28,7 @@ A .NET library for reading and creating spreadsheet files in ODS, XLSX, and deli
 - **Epoch conversion** — `FromEpochSeconds()`, `FromEpochMilliseconds()`, `ToEpochSeconds()`, `ToEpochMilliseconds()` extension methods on cells
 - **Formulas** — set `Formula` on a cell using Excel syntax (`=SUM(A1:A10)`); written to and read from XLSX and ODS, with automatic translation to ODS OpenFormula syntax. The library does not calculate results — see [Formulas](#formulas)
 - **File validation** — `SpreadsheetValidator` checks that XLSX, ODS, and delimited files are well-formed without importing them, returning structured errors and warnings (sheet, cell, row, rule code, message). Useful for vetting files produced by LLMs or other tools before they reach users
+- **Import limits** — `ImportOptions` caps the decompressed size and cell count of imported files, and XML document type declarations are rejected, so a small malicious file can't exhaust memory
 - **Workbook validation** — `Workbook.Validate()` reports problems in the in-memory model (values that don't match their type, bad sheet names, formulas pointing at missing sheets, ...) and the Generate methods refuse to write an invalid file, throwing `InvalidWorkbookException` with the same structured issues
 - **Dependency injection** — implements `ISpreadsheet` with `IDisposable`/`IAsyncDisposable`
 

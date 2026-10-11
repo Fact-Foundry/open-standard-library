@@ -70,7 +70,7 @@ Formula error values are split by meaning. `#REF!` and `#NAME?` mean the formula
 var options = new ValidationOptions
 {
     MaxIssues = 100,                          // Stop after this many issues (default 100)
-    MaxUncompressedBytes = 512L * 1024 * 1024, // Reject larger XLSX/ODS packages without decompressing (zip-bomb guard)
+    MaxUncompressedBytes = 64L * 1024 * 1024,  // Reject larger XLSX/ODS packages without decompressing (zip-bomb guard)
     Delimiter = ColumnDelimeter.Tab,          // Delimited files: null (default) infers it from the extension, else comma
     Encoding = FileEncoding.UTF8,             // Delimited files: expected text encoding
     RequireConsistentColumnCount = true       // Delimited files: rows with a different field count are errors (false = warnings)

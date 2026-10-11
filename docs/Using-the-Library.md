@@ -89,6 +89,29 @@ Set `Formula` on a cell using Excel A1 syntax, such as `=SUM(A1:A10)` or `='My D
 
 The library does not calculate formulas. Excel and LibreOffice compute them when the file opens, but tools that only read stored values see an empty result unless you set the cell's `Value` (and `ValueType`) to the known result, which is then stored as the cached value.
 
+## Import Limits
+
+Files from untrusted sources can be built to exhaust memory: a few hundred kilobytes can decompress to gigabytes, and an ODS file can declare a cell repeated a billion times in a single attribute. The importers apply limits from `ImportOptions` and throw `ImportLimitExceededException` when a file exceeds them:
+
+```csharp
+var options = new ImportOptions
+{
+    MaxUncompressedBytes = 64L * 1024 * 1024, // Declared size of all package entries (default 64 MB)
+    MaxCells = 10_000_000                     // Cells across all sheets, after expanding repeats (default 10 million)
+};
+
+try
+{
+    var workbook = await spreadsheet.ImportXlsxFileAsync(bytes, options);
+}
+catch (ImportLimitExceededException ex)
+{
+    Console.WriteLine(ex.Message);
+}
+```
+
+Parsed XML costs roughly ten times its byte size in memory, so size `MaxUncompressedBytes` against the memory you can spare, not the files you expect. XML with a document type declaration (the vehicle for entity-expansion attacks) is rejected with an `XmlException`, since neither ODF nor OOXML allows one.
+
 ## Validating Before Generating
 
 `workbook.Validate(format)` checks the model for anything that would produce an invalid file: values that don't match their `ValueType`, invalid or duplicate sheet names, out-of-range positions, control characters, and formulas that refer to missing sheets. The Generate methods run the same check and throw `InvalidWorkbookException` on errors, so an invalid file is never written. See [Validating Files](Validating-Files.md#validating-a-workbook-before-generating).

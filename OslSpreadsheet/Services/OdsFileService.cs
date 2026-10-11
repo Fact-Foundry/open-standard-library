@@ -82,19 +82,21 @@ namespace OslSpreadsheet.Services
             return output;
         }
 
-        public async Task<oWorkbook> GenerateModel(byte[] file)
+        public async Task<oWorkbook> GenerateModel(byte[] file, OoxSpreadsheet.ImportOptions options)
         {
             oWorkbook workbook = new();
 
             using var ms = new MemoryStream(file);
             using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+            XmlService.EnforceSizeLimit(archive, options);
+            long cellCount = 0;
 
             var contentEntry = archive.GetEntry("content.xml")
                 ?? throw new InvalidOperationException("Invalid ODS file: missing content.xml");
 
             XDocument doc;
             using (var contentStream = contentEntry.Open())
-                doc = await Task.Run(() => XDocument.Load(contentStream, LoadOptions.PreserveWhitespace));
+                doc = await Task.Run(() => XmlService.LoadSecure(contentStream, preserveWhitespace: true));
 
             XNamespace tableNs  = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
             XNamespace officeNs = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
@@ -138,14 +140,15 @@ namespace OslSpreadsheet.Services
 
                 foreach (var tableRow in GetTableRows(table, tableNs))
                 {
-                    int rowsRepeated = int.TryParse(tableRow.Attribute(tableNs + "number-rows-repeated")?.Value, out int rr) ? rr : 1;
+                    // Repeat counts are capped at the sheet limits: a few bytes can otherwise declare billions of cells
+                    int rowsRepeated = int.TryParse(tableRow.Attribute(tableNs + "number-rows-repeated")?.Value, out int rr) ? Math.Clamp(rr, 1, Math.Max(1, MaxRows - rowIndex)) : 1;
 
                     var rowData = new List<(int col, string value, CellValueType type, string? formula, string? styleName)>();
                     int colIndex = 0;
 
                     foreach (var cell in tableRow.Elements().Where(e => e.Name == tableNs + "table-cell" || e.Name == tableNs + "covered-table-cell"))
                     {
-                        int colsRepeated = int.TryParse(cell.Attribute(tableNs + "number-columns-repeated")?.Value, out int cr) ? cr : 1;
+                        int colsRepeated = int.TryParse(cell.Attribute(tableNs + "number-columns-repeated")?.Value, out int cr) ? Math.Clamp(cr, 1, Math.Max(1, MaxColumns - colIndex)) : 1;
 
                         // Covered cells are hidden by a merge; they occupy column positions but hold no visible data
                         if (cell.Name == tableNs + "covered-table-cell")
@@ -209,6 +212,11 @@ namespace OslSpreadsheet.Services
                         continue;
                     }
 
+                    cellCount += (long)rowsRepeated * rowData.Count;
+                    if (cellCount > options.MaxCells)
+                        throw new OoxSpreadsheet.ImportLimitExceededException(
+                            $"The file expands to more than {options.MaxCells:N0} cells, the import limit (ImportOptions.MaxCells).");
+
                     for (int r = 0; r < rowsRepeated; r++)
                     {
                         rowIndex++;
@@ -237,7 +245,7 @@ namespace OslSpreadsheet.Services
             {
                 XDocument settingsDoc;
                 using (var settingsStream = settingsEntry.Open())
-                    settingsDoc = await Task.Run(() => XDocument.Load(settingsStream));
+                    settingsDoc = await Task.Run(() => XmlService.LoadSecure(settingsStream));
 
                 XNamespace configNs = "urn:oasis:names:tc:opendocument:xmlns:config:1.0";
                 foreach (var entry in settingsDoc.Descendants(configNs + "config-item-map-named")
@@ -704,6 +712,9 @@ namespace OslSpreadsheet.Services
             return result;
         }
 
+        private const int MaxRows = 1_048_576;
+        private const int MaxColumns = 16_384;
+
         // A column declaration can repeat for the whole sheet (LibreOffice writes 1024 or more); cap how many widths one sets
         private const int MaxImportedWidthColumns = 1024;
 
@@ -769,7 +780,7 @@ namespace OslSpreadsheet.Services
             if (stylesEntry != null)
             {
                 using var stylesStream = stylesEntry.Open();
-                CollectDataStyles(await Task.Run(() => XDocument.Load(stylesStream, LoadOptions.PreserveWhitespace)));
+                CollectDataStyles(await Task.Run(() => XmlService.LoadSecure(stylesStream, preserveWhitespace: true)));
             }
 
             var result = new Dictionary<string, CellStyle>();
@@ -871,22 +882,32 @@ namespace OslSpreadsheet.Services
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Appends a paragraph's text. Walks nested spans and links with an explicit stack so a deeply nested
+        /// (possibly malicious) document can't overflow the call stack.
+        /// </summary>
         private static void AppendText(XElement element, XNamespace textNs, System.Text.StringBuilder sb)
         {
-            foreach (var node in element.Nodes())
+            var stack = new Stack<XNode>();
+            foreach (var node in element.Nodes().Reverse())
+                stack.Push(node);
+
+            while (stack.Count > 0)
             {
+                var node = stack.Pop();
                 if (node is XText text)
                     sb.Append(text.Value);
                 else if (node is XElement child)
                 {
                     if (child.Name == textNs + "s")
-                        sb.Append(' ', int.TryParse(child.Attribute(textNs + "c")?.Value, out int count) ? count : 1);
+                        sb.Append(' ', int.TryParse(child.Attribute(textNs + "c")?.Value, out int count) ? Math.Clamp(count, 0, MaxColumns) : 1);
                     else if (child.Name == textNs + "tab")
                         sb.Append('\t');
                     else if (child.Name == textNs + "line-break")
                         sb.Append('\n');
                     else
-                        AppendText(child, textNs, sb); // text:span, text:a, etc.
+                        foreach (var inner in child.Nodes().Reverse()) // text:span, text:a, etc.
+                            stack.Push(inner);
                 }
             }
         }
@@ -897,13 +918,19 @@ namespace OslSpreadsheet.Services
         /// </summary>
         private static IEnumerable<XElement> GetTableRows(XElement container, XNamespace tableNs)
         {
-            foreach (var child in container.Elements())
+            // Explicit stack rather than recursion: row groups can nest arbitrarily deep in a crafted file
+            var stack = new Stack<XElement>();
+            foreach (var child in container.Elements().Reverse())
+                stack.Push(child);
+
+            while (stack.Count > 0)
             {
-                if (child.Name == tableNs + "table-row")
-                    yield return child;
-                else if (child.Name == tableNs + "table-header-rows" || child.Name == tableNs + "table-rows" || child.Name == tableNs + "table-row-group")
-                    foreach (var row in GetTableRows(child, tableNs))
-                        yield return row;
+                var element = stack.Pop();
+                if (element.Name == tableNs + "table-row")
+                    yield return element;
+                else if (element.Name == tableNs + "table-header-rows" || element.Name == tableNs + "table-rows" || element.Name == tableNs + "table-row-group")
+                    foreach (var child in element.Elements().Reverse())
+                        stack.Push(child);
             }
         }
 

@@ -6,6 +6,6 @@ namespace OslSpreadsheet.Services
     {
         Task<byte[]> GenerateFileAsync(oWorkbook workbook);
 
-        Task<oWorkbook> GenerateModel(byte[] file);
+        Task<oWorkbook> GenerateModel(byte[] file, OoxSpreadsheet.ImportOptions options);
     }
 }

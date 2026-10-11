@@ -42,17 +42,20 @@ namespace OoxSpreadsheet
         /// Imports a delimited file into the workbook, using the current workbook's <see cref="oWorkbook.ColumnDelimeter"/>
         /// and <see cref="oWorkbook.FileEncoding"/>. Comma, tab, and pipe files may use RFC 4180 quoting.
         /// </summary>
-        Task<oWorkbook> ImportCsvFileAsync(byte[] file);
+        /// <exception cref="ImportLimitExceededException">The file exceeds a limit in <paramref name="options"/>.</exception>
+        Task<oWorkbook> ImportCsvFileAsync(byte[] file, ImportOptions? options = null);
 
         /// <summary>
         /// Imports an ODS file into the workbook.
         /// </summary>
-        Task<oWorkbook> ImportOdsFileAsync(byte[] file);
+        /// <exception cref="ImportLimitExceededException">The file exceeds a limit in <paramref name="options"/>.</exception>
+        Task<oWorkbook> ImportOdsFileAsync(byte[] file, ImportOptions? options = null);
 
         /// <summary>
         /// Imports an XLSX file into the workbook.
         /// </summary>
-        Task<oWorkbook> ImportXlsxFileAsync(byte[] file);
+        /// <exception cref="ImportLimitExceededException">The file exceeds a limit in <paramref name="options"/>.</exception>
+        Task<oWorkbook> ImportXlsxFileAsync(byte[] file, ImportOptions? options = null);
 
         /// <summary>
         /// Reads delimited rows one at a time from a stream without loading the entire file into memory, using the
@@ -118,31 +121,31 @@ namespace OoxSpreadsheet
         }
 
         /// <inheritdoc />
-        public async Task<oWorkbook> ImportCsvFileAsync(byte[] file)
+        public async Task<oWorkbook> ImportCsvFileAsync(byte[] file, ImportOptions? options = null)
         {
             IFileService _fileService = new DelimitedFileService(_workbook.ColumnDelimeter, _workbook.FileEncoding);
 
-            _workbook = await _fileService.GenerateModel(file);
+            _workbook = await _fileService.GenerateModel(file, options ?? new ImportOptions());
 
             return _workbook;
         }
 
         /// <inheritdoc />
-        public async Task<oWorkbook> ImportOdsFileAsync(byte[] file)
+        public async Task<oWorkbook> ImportOdsFileAsync(byte[] file, ImportOptions? options = null)
         {
             IFileService _fileService = new OdsFileService();
 
-            _workbook = await _fileService.GenerateModel(file);
+            _workbook = await _fileService.GenerateModel(file, options ?? new ImportOptions());
 
             return _workbook;
         }
 
         /// <inheritdoc />
-        public async Task<oWorkbook> ImportXlsxFileAsync(byte[] file)
+        public async Task<oWorkbook> ImportXlsxFileAsync(byte[] file, ImportOptions? options = null)
         {
             IFileService _fileService = new XlsxFileService();
 
-            _workbook = await _fileService.GenerateModel(file);
+            _workbook = await _fileService.GenerateModel(file, options ?? new ImportOptions());
 
             return _workbook;
         }

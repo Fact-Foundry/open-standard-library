@@ -73,7 +73,7 @@ namespace OslSpreadsheet.Services
         /// </summary>
         /// <param name="file"></param>
         /// <returns></returns>
-        public async Task<oWorkbook> GenerateModel(byte[] file)
+        public async Task<oWorkbook> GenerateModel(byte[] file, OoxSpreadsheet.ImportOptions options)
         {
             oWorkbook workbook = new()
             {
@@ -89,9 +89,14 @@ namespace OslSpreadsheet.Services
             using var reader = new StreamReader(new MemoryStream(file), GetEncoding(_importEncoding));
 
             int r = 0;
+            long cells = 0;
             await foreach (var values in DelimitedParser.ParseAsync(reader, _importDelimiter))
             {
                 r++;
+                cells += values.Length;
+                if (cells > options.MaxCells)
+                    throw new OoxSpreadsheet.ImportLimitExceededException(
+                        $"The file has more than {options.MaxCells:N0} cells, the import limit (ImportOptions.MaxCells).");
                 for (int c = 0; c < values.Length; c++)
                     sheet1.AddCell(r, c + 1, values[c]);
             }
