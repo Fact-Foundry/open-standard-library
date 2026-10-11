@@ -42,19 +42,19 @@ namespace OoxSpreadsheet
         /// Imports a delimited file into the workbook, using the current workbook's <see cref="oWorkbook.ColumnDelimeter"/>
         /// and <see cref="oWorkbook.FileEncoding"/>. Comma, tab, and pipe files may use RFC 4180 quoting.
         /// </summary>
-        /// <exception cref="ImportLimitExceededException">The file exceeds a limit in <paramref name="options"/>.</exception>
+        /// <exception cref="SpreadsheetImportException">The file can't be read, or exceeds a limit in <paramref name="options"/> (<see cref="ImportLimitExceededException"/>).</exception>
         Task<oWorkbook> ImportCsvFileAsync(byte[] file, ImportOptions? options = null);
 
         /// <summary>
         /// Imports an ODS file into the workbook.
         /// </summary>
-        /// <exception cref="ImportLimitExceededException">The file exceeds a limit in <paramref name="options"/>.</exception>
+        /// <exception cref="SpreadsheetImportException">The file is not a readable ODS file, or exceeds a limit in <paramref name="options"/> (<see cref="ImportLimitExceededException"/>).</exception>
         Task<oWorkbook> ImportOdsFileAsync(byte[] file, ImportOptions? options = null);
 
         /// <summary>
         /// Imports an XLSX file into the workbook.
         /// </summary>
-        /// <exception cref="ImportLimitExceededException">The file exceeds a limit in <paramref name="options"/>.</exception>
+        /// <exception cref="SpreadsheetImportException">The file is not a readable XLSX file, or exceeds a limit in <paramref name="options"/> (<see cref="ImportLimitExceededException"/>).</exception>
         Task<oWorkbook> ImportXlsxFileAsync(byte[] file, ImportOptions? options = null);
 
         /// <summary>
@@ -125,7 +125,7 @@ namespace OoxSpreadsheet
         {
             IFileService _fileService = new DelimitedFileService(_workbook.ColumnDelimeter, _workbook.FileEncoding);
 
-            _workbook = await _fileService.GenerateModel(file, options ?? new ImportOptions());
+            _workbook = await ImportAsync(_fileService, file, options, "a delimited");
 
             return _workbook;
         }
@@ -135,7 +135,7 @@ namespace OoxSpreadsheet
         {
             IFileService _fileService = new OdsFileService();
 
-            _workbook = await _fileService.GenerateModel(file, options ?? new ImportOptions());
+            _workbook = await ImportAsync(_fileService, file, options, "an ODS");
 
             return _workbook;
         }
@@ -145,9 +145,31 @@ namespace OoxSpreadsheet
         {
             IFileService _fileService = new XlsxFileService();
 
-            _workbook = await _fileService.GenerateModel(file, options ?? new ImportOptions());
+            _workbook = await ImportAsync(_fileService, file, options, "an XLSX");
 
             return _workbook;
+        }
+
+        /// <summary>
+        /// Runs an importer, translating whatever a malformed file makes the parser throw into one exception type.
+        /// Limit violations are already <see cref="SpreadsheetImportException"/>s and pass through unchanged.
+        /// </summary>
+        private static async Task<oWorkbook> ImportAsync(IFileService service, byte[] file, ImportOptions? options, string formatDescription)
+        {
+            ArgumentNullException.ThrowIfNull(file);
+            try
+            {
+                return await service.GenerateModel(file, options ?? new ImportOptions());
+            }
+            catch (SpreadsheetImportException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                throw new SpreadsheetImportException(
+                    $"The file could not be read as {formatDescription} file: {ex.Message} Use SpreadsheetValidator to get a detailed report.", ex);
+            }
         }
 
         /// <inheritdoc />

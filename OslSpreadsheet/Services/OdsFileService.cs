@@ -92,7 +92,7 @@ namespace OslSpreadsheet.Services
             long cellCount = 0;
 
             var contentEntry = archive.GetEntry("content.xml")
-                ?? throw new InvalidOperationException("Invalid ODS file: missing content.xml");
+                ?? throw new OoxSpreadsheet.SpreadsheetImportException("The package has no content.xml, so it is not an ODS file.");
 
             XDocument doc;
             using (var contentStream = contentEntry.Open())

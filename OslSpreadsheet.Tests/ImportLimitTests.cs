@@ -138,6 +138,7 @@ public class ImportLimitTests
 
     /// <summary>
     /// A DTD (the vehicle for entity-expansion and external-entity attacks) is rejected; neither ODF nor OOXML allows one.
+    /// The parser error surfaces as a SpreadsheetImportException with the XmlException inside.
     /// </summary>
     [Fact]
     public async Task Ods_Dtd_IsRejected()
@@ -149,7 +150,8 @@ public class ImportLimitTests
             "</table:table></office:spreadsheet></office:body></office:document-content>");
 
         using var spreadsheet = new Spreadsheet();
-        await Assert.ThrowsAsync<System.Xml.XmlException>(() => spreadsheet.ImportOdsFileAsync(ods));
+        var ex = await Assert.ThrowsAsync<SpreadsheetImportException>(() => spreadsheet.ImportOdsFileAsync(ods));
+        Assert.IsType<System.Xml.XmlException>(ex.InnerException);
     }
 
     /// <summary>
@@ -179,7 +181,8 @@ public class ImportLimitTests
         }
 
         using var importer = new Spreadsheet();
-        await Assert.ThrowsAsync<System.Xml.XmlException>(() => importer.ImportXlsxFileAsync(ms.ToArray()));
+        var ex = await Assert.ThrowsAsync<SpreadsheetImportException>(() => importer.ImportXlsxFileAsync(ms.ToArray()));
+        Assert.IsType<System.Xml.XmlException>(ex.InnerException);
     }
 
     /// <summary>

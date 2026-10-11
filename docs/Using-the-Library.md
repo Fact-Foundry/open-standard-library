@@ -91,9 +91,22 @@ Set `Formula` on a cell using Excel A1 syntax, such as `=SUM(A1:A10)` or `='My D
 
 The library does not calculate formulas. Excel and LibreOffice compute them when the file opens, but tools that only read stored values see an empty result unless you set the cell's `Value` (and `ValueType`) to the known result, which is then stored as the cached value.
 
-## Import Limits
+## Import Errors and Limits
 
-Files from untrusted sources can be built to exhaust memory: a few hundred kilobytes can decompress to gigabytes, and an ODS file can declare a cell repeated a billion times in a single attribute. The importers apply limits from `ImportOptions` and throw `ImportLimitExceededException` when a file exceeds them:
+Any failure to read a file (wrong format, corrupt or truncated archive, malformed XML, or an exceeded limit) is thrown as `SpreadsheetImportException`, with the underlying parser error in `InnerException`. Catch that one type:
+
+```csharp
+try
+{
+    var workbook = await spreadsheet.ImportXlsxFileAsync(bytes);
+}
+catch (SpreadsheetImportException ex)
+{
+    // ex.Message says what went wrong; for a full report, run SpreadsheetValidator.Validate() on the same bytes
+}
+```
+
+Files from untrusted sources can be built to exhaust memory: a few hundred kilobytes can decompress to gigabytes, and an ODS file can declare a cell repeated a billion times in a single attribute. The importers apply limits from `ImportOptions` and throw `ImportLimitExceededException` (a subclass of `SpreadsheetImportException`) when a file exceeds them:
 
 ```csharp
 var options = new ImportOptions
@@ -112,7 +125,7 @@ catch (ImportLimitExceededException ex)
 }
 ```
 
-Parsed XML costs roughly ten times its byte size in memory, so size `MaxUncompressedBytes` against the memory you can spare, not the files you expect. XML with a document type declaration (the vehicle for entity-expansion attacks) is rejected with an `XmlException`, since neither ODF nor OOXML allows one.
+Parsed XML costs roughly ten times its byte size in memory, so size `MaxUncompressedBytes` against the memory you can spare, not the files you expect. XML with a document type declaration (the vehicle for entity-expansion attacks) is rejected, since neither ODF nor OOXML allows one.
 
 ## Validating Before Generating
 

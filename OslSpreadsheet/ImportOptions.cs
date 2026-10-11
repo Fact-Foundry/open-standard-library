@@ -21,9 +21,20 @@ namespace OoxSpreadsheet
     }
 
     /// <summary>
+    /// Thrown by the Import methods when a file can't be read: it is not the expected format, is corrupt or truncated,
+    /// contains malformed XML, or exceeds an import limit (see <see cref="ImportLimitExceededException"/>).
+    /// <see cref="Exception.InnerException"/> holds the underlying parser error when there is one.
+    /// Catching this one type covers every malformed-input failure; use <c>SpreadsheetValidator</c> first for a detailed report.
+    /// </summary>
+    public class SpreadsheetImportException : Exception
+    {
+        internal SpreadsheetImportException(string message, Exception? innerException = null) : base(message, innerException) { }
+    }
+
+    /// <summary>
     /// Thrown when a file exceeds one of the <see cref="ImportOptions"/> limits.
     /// </summary>
-    public sealed class ImportLimitExceededException : Exception
+    public sealed class ImportLimitExceededException : SpreadsheetImportException
     {
         internal ImportLimitExceededException(string message) : base(message) { }
     }

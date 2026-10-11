@@ -91,7 +91,7 @@ namespace OslSpreadsheet.Services
 
             // Load workbook.xml
             var wbEntry = archive.GetEntry("xl/workbook.xml")
-                ?? throw new InvalidOperationException("Invalid XLSX file: missing xl/workbook.xml");
+                ?? throw new OoxSpreadsheet.SpreadsheetImportException("The package has no xl/workbook.xml, so it is not an XLSX file.");
 
             XDocument wbDoc;
             using (var wbStream = wbEntry.Open())
@@ -99,14 +99,17 @@ namespace OslSpreadsheet.Services
 
             // Load workbook.xml.rels — maps rId to sheet file path
             var relsEntry = archive.GetEntry("xl/_rels/workbook.xml.rels")
-                ?? throw new InvalidOperationException("Invalid XLSX file: missing xl/_rels/workbook.xml.rels");
+                ?? throw new OoxSpreadsheet.SpreadsheetImportException("The package has no xl/_rels/workbook.xml.rels, so its sheets can't be located.");
 
             XDocument relsDoc;
             using (var relsStream = relsEntry.Open())
                 relsDoc = await Task.Run(() => XmlService.LoadSecure(relsStream));
 
-            var relationships = relsDoc.Descendants(relsNs + "Relationship")
-                .ToDictionary(r => r.Attribute("Id")!.Value, r => r.Attribute("Target")!.Value);
+            // Relationships missing an Id or Target are malformed; skip them rather than fail on a null
+            var relationships = new Dictionary<string, string>();
+            foreach (var rel in relsDoc.Descendants(relsNs + "Relationship"))
+                if (rel.Attribute("Id")?.Value is string id && rel.Attribute("Target")?.Value is string target)
+                    relationships.TryAdd(id, target);
 
             foreach (var sheetEl in wbDoc.Descendants(mainNs + "sheet"))
             {
