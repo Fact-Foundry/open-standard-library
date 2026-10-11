@@ -129,6 +129,24 @@ namespace OslSpreadsheet.Services
         }
 
         /// <summary>
+        /// True when a spreadsheet application opening a delimited file would evaluate the value as a formula:
+        /// it starts with '=', '+', '-', '@', tab, or carriage return, and is not simply a number such as "-5".
+        /// </summary>
+        internal static bool IsFormulaLike(string value)
+        {
+            if (value.Length == 0) return false;
+            var c = value[0];
+            if (c is '\t' or '\r') return true;
+            if (c is not ('=' or '+' or '-' or '@')) return false;
+            return !double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _);
+        }
+
+        /// <summary>
+        /// Prefixes a formula-like value with an apostrophe, which spreadsheet applications treat as "store as text".
+        /// </summary>
+        internal static string EscapeFormulaLike(string value) => "'" + value;
+
+        /// <summary>
         /// Formats a value for a delimited file. Comma files always quote values; tab and pipe files quote only values
         /// that would otherwise be misread (containing the delimiter or a line break, or starting with a quote).
         /// ASCII-delimited values are written as-is.

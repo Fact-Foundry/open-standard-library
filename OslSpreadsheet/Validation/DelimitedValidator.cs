@@ -1,4 +1,5 @@
 using System.Text;
+using OslSpreadsheet.Services;
 
 namespace OslSpreadsheet.Validation
 {
@@ -113,9 +114,18 @@ namespace OslSpreadsheet.Validation
             var pendingBlankLines = new List<int>();
             var bareQuoteReportedOnLine = 0;
             var recordLineIsEmpty = true;
+            var fieldText = new System.Text.StringBuilder(); // first few characters of the current field, for the formula check
 
             void EndField()
             {
+                // fieldText holds at most the first 16 characters, so a long signed number may be cut mid-digits; LooksNumeric covers that
+                var truncatedNumber = fieldText.Length >= 16 && fieldText[0] is '-' or '+' && LooksNumeric(fieldText);
+                if (fieldText.Length > 0 && !truncatedNumber && DelimitedParser.IsFormulaLike(fieldText.ToString()))
+                    _issues.Warning($"{Prefix}_FORMULA_LIKE_VALUE",
+                        $"A value starts with '{Printable(fieldText[0])}', so a spreadsheet application opening this file would evaluate it as a formula (CSV injection). Prefix it with an apostrophe to store it as text.",
+                        location: $"row {recordNumber + 1}, line {recordLine}", row: recordNumber + 1);
+                fieldText.Clear();
+
                 if (fieldLength > XlsxValidator.MaxCellTextLength)
                     _issues.Warning($"{Prefix}_FIELD_TOO_LONG",
                         $"A field is {fieldLength:N0} characters long. Excel and LibreOffice truncate cell text at {XlsxValidator.MaxCellTextLength:N0} characters.",
@@ -180,6 +190,7 @@ namespace OslSpreadsheet.Validation
                     else
                     {
                         fieldLength++;
+                        if (fieldText.Length < 16) fieldText.Append(c);
                         if (c == '\n' || (c == '\r' && (i + 1 >= text.Length || text[i + 1] != '\n')))
                             line++;
                     }
@@ -189,6 +200,7 @@ namespace OslSpreadsheet.Validation
                 if (state == State.QuoteInQuoted && c == '"')
                 {
                     fieldLength++;
+                    if (fieldText.Length < 16) fieldText.Append(c);
                     state = State.Quoted;
                     continue;
                 }
@@ -235,6 +247,7 @@ namespace OslSpreadsheet.Validation
                         {
                             state = State.Unquoted;
                             fieldLength++;
+                            if (fieldText.Length < 16) fieldText.Append(c);
                             if (c == ' ' && _strictQuoting && NextNonSpaceIsQuote(text, i))
                                 _issues.Warning($"{Prefix}_SPACE_BEFORE_QUOTE",
                                     "A field starts with spaces followed by a double quote. The quote is treated as data, not as the start of a quoted value. Remove the spaces after the delimiter.",
@@ -244,6 +257,7 @@ namespace OslSpreadsheet.Validation
 
                     case State.Unquoted:
                         fieldLength++;
+                        if (fieldText.Length < 16) fieldText.Append(c);
                         if (c == '"' && _strictQuoting && bareQuoteReportedOnLine != line)
                         {
                             bareQuoteReportedOnLine = line;
@@ -259,6 +273,7 @@ namespace OslSpreadsheet.Validation
                             location: $"row {recordNumber + 1}, line {line}", row: recordNumber + 1);
                         state = State.Unquoted;
                         fieldLength++;
+                        if (fieldText.Length < 16) fieldText.Append(c);
                         break;
                 }
             }
@@ -305,6 +320,17 @@ namespace OslSpreadsheet.Validation
                     return name;
             }
             return null;
+        }
+
+        /// <summary>
+        /// A long field starting with a sign whose captured prefix is all digits and separators is a number, not a formula.
+        /// </summary>
+        private static bool LooksNumeric(System.Text.StringBuilder prefix)
+        {
+            for (int i = 1; i < prefix.Length; i++)
+                if (!char.IsAsciiDigit(prefix[i]) && prefix[i] is not ('.' or ',' or 'e' or 'E'))
+                    return false;
+            return true;
         }
 
         private static bool NextNonSpaceIsQuote(string text, int index)

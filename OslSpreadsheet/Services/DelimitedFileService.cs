@@ -34,7 +34,7 @@ namespace OslSpreadsheet.Services
             var cells = workbook.Sheets[0].Cells;
             var cols = cells.Max(x => x.Column);
             var rows = cells.Max(x => x.Row);
-            var lookup = cells.GroupBy(c => (c.Row, c.Column)).ToDictionary(g => g.Key, g => g.Last().Value);
+            var lookup = cells.GroupBy(c => (c.Row, c.Column)).ToDictionary(g => g.Key, g => g.Last());
 
             var result = new StringBuilder();
 
@@ -45,7 +45,9 @@ namespace OslSpreadsheet.Services
                 {
                     if (c > 1)
                         result.Append(colDelimiter);
-                    var value = lookup.TryGetValue((r, c), out var v) ? v ?? "" : "";
+                    var value = lookup.TryGetValue((r, c), out var cell) ? cell.Value ?? "" : "";
+                    if (workbook.EscapeFormulaLikeValues && cell?.ValueType == CellValueType.String && DelimitedParser.IsFormulaLike(value))
+                        value = DelimitedParser.EscapeFormulaLike(value);
                     result.Append(DelimitedParser.FormatValue(value, delimiter));
                 }
                 result.Append(nlDelimiter);

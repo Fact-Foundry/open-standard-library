@@ -89,10 +89,10 @@ namespace OslSpreadsheet.Validation
                     $"The auto-filter range (rows {sr}-{er}, columns {sc}-{ec}) is invalid. Start must be at least 1 and end must not be before start.", sheet: name);
 
             foreach (var cell in sheet.Cells)
-                ValidateCell(cell, name, format, sheetNames, issues);
+                ValidateCell(cell, name, format, sheetNames, workbook, issues);
         }
 
-        private static void ValidateCell(oCell cell, string sheetName, ValidationFileFormat format, HashSet<string> sheetNames, IssueCollector issues)
+        private static void ValidateCell(oCell cell, string sheetName, ValidationFileFormat format, HashSet<string> sheetNames, oWorkbook workbook, IssueCollector issues)
         {
             var cellName = cell.Column >= 1 && cell.Column <= MaxColumns ? $"{XlsxValidator.ColumnName(cell.Column)}{cell.Row}" : $"R{cell.Row}C{cell.Column}";
             var location = $"{sheetName}!{cellName}";
@@ -166,7 +166,13 @@ namespace OslSpreadsheet.Validation
                     location: location, sheet: sheetName, cell: cellName, row: cell.Row);
 
             if (format == ValidationFileFormat.Delimited)
+            {
+                if (!workbook.EscapeFormulaLikeValues && cell.ValueType == CellValueType.String && DelimitedParser.IsFormulaLike(value))
+                    issues.Warning($"{Prefix}_DELIMITED_FORMULA_LIKE_VALUE",
+                        $"The text value \"{XlsxValidator.Truncate(value)}\" starts with '{Printable(value[0])}', so a spreadsheet application opening the delimited file would evaluate it as a formula (CSV injection). Set oWorkbook.EscapeFormulaLikeValues = true to write it as text, or change the value.",
+                        location: location, sheet: sheetName, cell: cellName, row: cell.Row);
                 return;
+            }
 
             var formula = FormulaTranslator.Normalize(cell.Formula);
             if (formula == null)
@@ -194,6 +200,8 @@ namespace OslSpreadsheet.Validation
                     return c;
             return null;
         }
+
+        private static string Printable(char c) => c switch { '\t' => "\\t", '\r' => "\\r", _ => c.ToString() };
 
         private static string FormatName(ValidationFileFormat format) => format switch
         {

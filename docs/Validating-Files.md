@@ -136,6 +136,7 @@ Rules are prefixed `WB_`:
 | `WB_NUMBER_FORMAT_UNSUPPORTED` | Warning (ODS only) | A `NumberFormat` that can't be translated to an ODS data style; the cell falls back to the default format |
 | `WB_FREEZE_INVALID` / `WB_AUTOFILTER_INVALID` | Error | Negative freeze counts, or an auto-filter range whose end is before its start |
 | `WB_DELIMITED_MULTIPLE_SHEETS` | Warning | More than one sheet when generating a delimited file; only the first is written |
+| `WB_DELIMITED_FORMULA_LIKE_VALUE` | Warning | A text value that a spreadsheet application would evaluate as a formula when opening the delimited file (starts with `=` `+` `-` `@`, tab, or CR and isn't a plain number). Reported only while `oWorkbook.EscapeFormulaLikeValues` is off. See [Formula Injection](Working-with-Delimited-Files.md#formula-injection) |
 
 ## What Is Checked
 
@@ -180,3 +181,4 @@ It does not check function names, argument counts, or whether a referenced range
 - Comma-delimited files follow RFC 4180 quoting. Quoted values must be closed, and quotes inside them must be doubled. Tab- and pipe-delimited files may optionally use the same quoting. ASCII-delimited files use the unit (0x1F) and record (0x1E) separators with no quoting.
 - Every row has the same number of fields as the first row
 - Warnings for blank lines between rows, stray quotes in unquoted values, values longer than 32,767 characters, and files that appear to use a different delimiter
+- `CSV_FORMULA_LIKE_VALUE` warning for values a spreadsheet application would evaluate as formulas (starting with `=` `+` `-` `@`, tab, or CR and not a plain number), the vehicle for CSV injection

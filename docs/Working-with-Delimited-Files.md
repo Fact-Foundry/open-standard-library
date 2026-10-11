@@ -47,6 +47,18 @@ The code above generates the following output:
 "5"" Fitting","10.20"
 ```
 
+## Formula Injection
+
+Spreadsheet applications evaluate a CSV value that starts with `=`, `+`, `-`, `@`, a tab, or a carriage return as a formula when the file is opened. A value such as `=HYPERLINK("http://evil")` or `=cmd|'/c calc'!A0` supplied by a user or an LLM therefore becomes live when the recipient opens the file ("CSV injection"). The library writes values verbatim by default. To protect recipients, turn on escaping:
+
+```csharp
+workbook.EscapeFormulaLikeValues = true;
+```
+
+Formula-like **text** values are then prefixed with an apostrophe (`'=1+1`), which Excel and LibreOffice treat as "store as text" and hide. Values that are plain numbers (`-5`, `+3.5`) and cells typed `Float`/`Int64` are left alone. The option is off by default because it changes the exported data; when it is off, `workbook.Validate(ValidationFileFormat.Delimited)` reports each such value as a `WB_DELIMITED_FORMULA_LIKE_VALUE` warning, and `SpreadsheetValidator.ValidateDelimited()` reports them in existing files as `CSV_FORMULA_LIKE_VALUE`.
+
+Note that this library's own import keeps the apostrophe as part of the value; only spreadsheet applications strip it.
+
 ## Import Delimited File
 
 Import uses the workbook's `ColumnDelimeter` and `FileEncoding`, so set them before importing anything other than a UTF-8 comma-delimited file:
