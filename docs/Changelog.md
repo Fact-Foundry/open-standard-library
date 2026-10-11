@@ -4,9 +4,9 @@ All notable changes to Open Standard Library will be documented in this file.
 
 ---
 
-## Unreleased
+## v1.1.0 — 2026-10-11
 
-This release contains breaking changes (see **Removed** and **Changed**) and should be published as **v1.1.0**.
+Minor version bump because of two breaking changes, both under **Changed** and **Removed** below: `AsFloat<T>(float)` became `AsFloat(double)`, and the unused `SpreadsheetFileFormat` enum was removed. Implementers of `ISpreadsheet` also need the new optional `ImportOptions` parameter on the Import methods. Everything else is additive or a fix.
 
 ### Added
 - **Formulas in XLSX and ODS** — `oCell.Formula` (Excel A1 syntax, e.g. `=SUM('My Data'!A1:A3)`) is now written when generating and read when importing. Previously the property was stored but never written to files. ODS formulas are translated to and from OpenFormula syntax (`of:=SUM([$'My Data'.A1:.A3])`). XLSX shared formulas are expanded on import. A cell's `Value` on a formula cell is stored as the cached result; without one, XLSX workbooks are flagged to recalculate on load and ODS cells are left untyped so the application calculates them. The library does not calculate formulas itself
