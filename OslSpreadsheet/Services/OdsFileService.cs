@@ -332,7 +332,7 @@ namespace OslSpreadsheet.Services
                             {
                                 Name = colStyleName,
                                 Family = "table-column",
-                                tableColumnProperties = new() { ColumnWidth = $"{CharsToOdsCm(width)}cm" }
+                                tableColumnProperties = new() { ColumnWidth = $"{CharsToOdsCm(width).ToString(System.Globalization.CultureInfo.InvariantCulture)}cm" }
                             });
                             table.tableColumns.Add(new ODContent.Table.TableColumn() { StyleName = colStyleName, NumberColumnsRepeated = null });
                         }
@@ -604,7 +604,7 @@ namespace OslSpreadsheet.Services
                         }
                         if (cs.FontColor != null) style.textProperties.Color = Colors.Normalize(cs.FontColor);
                         if (cs.FontName != null) style.textProperties.FontName = cs.FontName;
-                        if (cs.FontSize != null) style.textProperties.FontSize = $"{cs.FontSize}pt";
+                        if (cs.FontSize != null) style.textProperties.FontSize = $"{cs.FontSize.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}pt";
                     }
 
                     if (cs.BackgroundColor != null || cs.BorderTop != null || cs.BorderBottom != null || cs.BorderLeft != null || cs.BorderRight != null || cs.WrapText)
@@ -625,7 +625,7 @@ namespace OslSpreadsheet.Services
         }
 
         private static bool IsDateOnly(string value) =>
-            DateTime.TryParse(value, out var dt) && dt.TimeOfDay == TimeSpan.Zero && !value.Contains('T');
+            DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt) && dt.TimeOfDay == TimeSpan.Zero && !value.Contains('T');
 
         /// <summary>
         /// Inserts the data style elements (default date styles and custom number formats) into office:automatic-styles.

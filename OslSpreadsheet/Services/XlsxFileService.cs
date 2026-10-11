@@ -186,7 +186,7 @@ namespace OslSpreadsheet.Services
                                 if (!string.IsNullOrEmpty(value))
                                 {
                                     var styleIdx = int.TryParse(cellEl.Attribute("s")?.Value, out int s) ? s : -1;
-                                    if (styleIdx >= 0 && dateXfIndices.Contains(styleIdx) && double.TryParse(rawValue, out double serial))
+                                    if (styleIdx >= 0 && dateXfIndices.Contains(styleIdx) && double.TryParse(rawValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double serial))
                                     {
                                         valueType = CellValueType.DateTime;
                                         value = System.DateTime.FromOADate(serial).ToString("yyyy-MM-ddTHH:mm:ss");
@@ -327,7 +327,7 @@ namespace OslSpreadsheet.Services
         private const string DateOnlyFormatCode = "yyyy-mm-dd";
 
         private static bool IsDateOnly(string value) =>
-            System.DateTime.TryParse(value, out var dt) && dt.TimeOfDay == TimeSpan.Zero && !value.Contains('T');
+            System.DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt) && dt.TimeOfDay == TimeSpan.Zero && !value.Contains('T');
 
         private static readonly HashSet<int> BuiltInDateNumFmtIds =
             new(Enumerable.Range(14, 9)
@@ -654,7 +654,7 @@ namespace OslSpreadsheet.Services
             if (s.Bold) sb.Append("<b/>");
             if (s.Italic) sb.Append("<i/>");
             if (s.Underline) sb.Append("<u/>");
-            sb.Append($"<sz val=\"{s.FontSize ?? 11}\"/>");
+            sb.Append($"<sz val=\"{(s.FontSize ?? 11).ToString(System.Globalization.CultureInfo.InvariantCulture)}\"/>");
             if (s.FontColor != null)
                 sb.Append($"<color rgb=\"{ToArgb(s.FontColor)}\"/>");
             sb.Append($"<name val=\"{SecurityElement.Escape(s.FontName ?? "Calibri")}\"/>");
@@ -706,7 +706,7 @@ namespace OslSpreadsheet.Services
             {
                 sb.Append("<cols>");
                 foreach (var (col, width) in sheet.ColumnWidths.OrderBy(x => x.Key))
-                    sb.Append($"<col min=\"{col}\" max=\"{col}\" width=\"{width}\" customWidth=\"1\"/>");
+                    sb.Append($"<col min=\"{col}\" max=\"{col}\" width=\"{width.ToString(System.Globalization.CultureInfo.InvariantCulture)}\" customWidth=\"1\"/>");
                 sb.Append("</cols>");
             }
 
@@ -728,8 +728,8 @@ namespace OslSpreadsheet.Services
 
                     if (FormulaTranslator.Normalize(cell.Formula) is string formula)
                         sb.Append(BuildFormulaCell(cell, cellRef, styleAttr, formula));
-                    else if (cell.ValueType == CellValueType.DateTime && System.DateTime.TryParse(cell.Value, out var dt))
-                        sb.Append($"<c r=\"{cellRef}\"{styleAttr}><v>{dt.ToOADate()}</v></c>");
+                    else if (cell.ValueType == CellValueType.DateTime && System.DateTime.TryParse(cell.Value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt))
+                        sb.Append($"<c r=\"{cellRef}\"{styleAttr}><v>{dt.ToOADate().ToString(System.Globalization.CultureInfo.InvariantCulture)}</v></c>");
                     else if (cell.ValueType == CellValueType.Float || cell.ValueType == CellValueType.Int64)
                         sb.Append($"<c r=\"{cellRef}\"{styleAttr}><v>{SecurityElement.Escape(cell.Value)}</v></c>");
                     else if (cell.ValueType == CellValueType.Boolean)
@@ -763,8 +763,8 @@ namespace OslSpreadsheet.Services
             {
                 CellValueType.Float or CellValueType.Int64 when double.TryParse(cell.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _)
                     => $"<c r=\"{cellRef}\"{styleAttr}>{f}<v>{SecurityElement.Escape(cell.Value)}</v></c>",
-                CellValueType.DateTime when System.DateTime.TryParse(cell.Value, out var dt)
-                    => $"<c r=\"{cellRef}\"{styleAttr}>{f}<v>{dt.ToOADate()}</v></c>",
+                CellValueType.DateTime when System.DateTime.TryParse(cell.Value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt)
+                    => $"<c r=\"{cellRef}\"{styleAttr}>{f}<v>{dt.ToOADate().ToString(System.Globalization.CultureInfo.InvariantCulture)}</v></c>",
                 CellValueType.Boolean
                     => $"<c r=\"{cellRef}\"{styleAttr} t=\"b\">{f}<v>{(cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "1" : "0")}</v></c>",
                 _ => $"<c r=\"{cellRef}\"{styleAttr} t=\"str\">{f}<v>{SecurityElement.Escape(cell.Value)}</v></c>"
