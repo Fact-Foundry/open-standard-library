@@ -33,13 +33,42 @@ namespace OslSpreadsheet.Services
         /// </summary>
         internal static void EnforceSizeLimit(ZipArchive archive, OoxSpreadsheet.ImportOptions options)
         {
-            long total = 0;
-            foreach (var entry in archive.Entries)
-                total += entry.Length;
-
-            if (total > options.MaxUncompressedBytes)
+            if (!DeclaredSizeWithinLimit(archive.Entries.Select(e => e.Length), options.MaxUncompressedBytes, out long declared))
                 throw new OoxSpreadsheet.ImportLimitExceededException(
-                    $"The file declares {total:N0} bytes of uncompressed content, which exceeds the import limit of {options.MaxUncompressedBytes:N0} bytes (ImportOptions.MaxUncompressedBytes).");
+                    $"The file declares at least {declared:N0} bytes of uncompressed content, which exceeds the import limit of {options.MaxUncompressedBytes:N0} bytes (ImportOptions.MaxUncompressedBytes).");
+        }
+
+        /// <summary>
+        /// Checks the declared uncompressed sizes of a package's entries against a limit. Each entry is checked on its own
+        /// and the total is summed with overflow detection, because the sizes come from the file: Zip64 lets an entry
+        /// declare up to 2^63 bytes, and three such entries would wrap an unchecked sum to a negative number that
+        /// passes a plain comparison. <paramref name="declared"/> is the total, or the size that failed the check.
+        /// </summary>
+        internal static bool DeclaredSizeWithinLimit(IEnumerable<long> entryLengths, long limit, out long declared)
+        {
+            declared = 0;
+            foreach (var length in entryLengths)
+            {
+                if (length < 0 || length > limit)
+                {
+                    declared = length < 0 ? long.MaxValue : length;
+                    return false;
+                }
+
+                try
+                {
+                    declared = checked(declared + length);
+                }
+                catch (OverflowException)
+                {
+                    declared = long.MaxValue;
+                    return false;
+                }
+
+                if (declared > limit)
+                    return false;
+            }
+            return true;
         }
 
         /// <summary>
