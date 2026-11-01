@@ -72,41 +72,29 @@ namespace OslSpreadsheet.Services
         }
 
         /// <summary>
-        /// Serializes an object to UTF-8 encoded XML bytes.
+        /// Serializes an object to UTF-8 encoded XML bytes. Serialization errors propagate to the caller so a failure
+        /// is never written into a package as an empty part.
         /// </summary>
         internal static async Task<byte[]> ConvertToXmlAsync(object obj)
         {
-            try
+            XmlSerializer serializer = new(obj.GetType());
+
+            var settings = new XmlWriterSettings
             {
-                XmlSerializer serializer = new(obj.GetType());
+                Indent = false,
+                OmitXmlDeclaration = false,
+                Encoding = new UTF8Encoding(false),
+                DoNotEscapeUriAttributes = true
+            };
 
-                var utf8NoBom = new UTF8Encoding(false);
-                var settings = new XmlWriterSettings
-                {
-                    Indent = false,
-                    OmitXmlDeclaration = false,
-                    Encoding = utf8NoBom,
-                    DoNotEscapeUriAttributes = true
-                };
+            var ns = new XmlSerializerNamespaces();
+            ns.Add(string.Empty, string.Empty);
 
-                var ns = new XmlSerializerNamespaces();
-                ns.Add(string.Empty, string.Empty);
+            await using MemoryStream memoryStream = new();
+            using (var writer = XmlWriter.Create(memoryStream, settings))
+                serializer.Serialize(writer, obj, ns);
 
-                await using MemoryStream memoryStream = new();
-                using var streamWriter = XmlWriter.Create(memoryStream, settings);
-
-                serializer.Serialize(streamWriter, obj, ns);
-
-                var file = memoryStream.ToArray();
-
-                var result = Encoding.UTF8.GetString(file);
-
-                return Encoding.UTF8.GetBytes(result.Replace("utf-8", "UTF-8").Replace("\" />", "\"/>"));
-            }
-            catch
-            {
-                return [];
-            }
+            return memoryStream.ToArray();
         }
     }
 }

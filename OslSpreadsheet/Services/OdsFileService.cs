@@ -18,69 +18,58 @@ namespace OslSpreadsheet.Services
 
         public async Task<byte[]> GenerateFileAsync(oWorkbook workbook)
         {
-            byte[] output;
+            var (content, hasDateOnly, hasDateTime, customDataStyles) = GenerateContentFile(workbook);
+            var meta = GenerateMetaFile(workbook);
+            var style = GenerateStyleFile(workbook);
 
-            try
+            var manifest = new ODManifest();
+            bool hasSettings = workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0)
+                || workbook.ActiveSheet() != workbook.Sheets.FirstOrDefault();
+            if (hasSettings)
+                manifest.fileEntries.Add(new ODManifest.FileEntry() { FullPath = "settings.xml", MediaType = "text/xml" });
+
+            // Add models to a file list for compression
+            // mimetype must be first and uncompressed per ODS spec
+            List<InMemoryFile> files = new()
             {
-                var (content, hasDateOnly, hasDateTime, customDataStyles) = GenerateContentFile(workbook);
-                var meta = GenerateMetaFile(workbook);
-                var style = GenerateStyleFile(workbook);
-
-                var manifest = new ODManifest();
-                bool hasSettings = workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0)
-                    || workbook.ActiveSheet() != workbook.Sheets.FirstOrDefault();
-                if (hasSettings)
-                    manifest.fileEntries.Add(new ODManifest.FileEntry() { FullPath = "settings.xml", MediaType = "text/xml" });
-
-                // Add models to a file list for compression
-                // mimetype must be first and uncompressed per ODS spec
-                List<InMemoryFile> files = new()
+                new InMemoryFile()
                 {
-                    new InMemoryFile()
-                    {
-                        FileName = "mimetype",
-                        Content = Encoding.ASCII.GetBytes("application/vnd.oasis.opendocument.spreadsheet"),
-                        Store = true
-                    },
-                    new InMemoryFile()
-                    {
-                        FileName = "META-INF/manifest.xml",
-                        Content = await XmlService.ConvertToXmlAsync(manifest)
-                    },
-                    new InMemoryFile()
-                    {
-                        FileName = "content.xml",
-                        Content = InjectOdsDataStyles(await XmlService.ConvertToXmlAsync(content), hasDateOnly, hasDateTime, customDataStyles)
-                    },
-                    new InMemoryFile()
-                    {
-                        FileName = "meta.xml",
-                        Content = await XmlService.ConvertToXmlAsync(meta)
-                    },
-                    new InMemoryFile()
-                    {
-                        FileName = "styles.xml",
-                        Content = await XmlService.ConvertToXmlAsync(style)
-                    }
-                };
-
-                if (hasSettings)
+                    FileName = "mimetype",
+                    Content = Encoding.ASCII.GetBytes("application/vnd.oasis.opendocument.spreadsheet"),
+                    Store = true
+                },
+                new InMemoryFile()
                 {
-                    files.Add(new InMemoryFile()
-                    {
-                        FileName = "settings.xml",
-                        Content = BuildSettingsFile(workbook)
-                    });
+                    FileName = "META-INF/manifest.xml",
+                    Content = await XmlService.ConvertToXmlAsync(manifest)
+                },
+                new InMemoryFile()
+                {
+                    FileName = "content.xml",
+                    Content = InjectOdsDataStyles(await XmlService.ConvertToXmlAsync(content), hasDateOnly, hasDateTime, customDataStyles)
+                },
+                new InMemoryFile()
+                {
+                    FileName = "meta.xml",
+                    Content = await XmlService.ConvertToXmlAsync(meta)
+                },
+                new InMemoryFile()
+                {
+                    FileName = "styles.xml",
+                    Content = await XmlService.ConvertToXmlAsync(style)
                 }
+            };
 
-                output = await ZipService.GenerateZipAsync(files);
-            }
-            catch
+            if (hasSettings)
             {
-                throw new Exception("There was an issue compressing the file.");
+                files.Add(new InMemoryFile()
+                {
+                    FileName = "settings.xml",
+                    Content = BuildSettingsFile(workbook)
+                });
             }
 
-            return output;
+            return await ZipService.GenerateZipAsync(files);
         }
 
         public async Task<oWorkbook> GenerateModel(byte[] file, OoxSpreadsheet.ImportOptions options)
