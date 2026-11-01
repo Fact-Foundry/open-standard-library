@@ -73,6 +73,61 @@ XLSX stores the code directly, so any code Excel accepts works there. ODS has no
 
 On import, the format is read back into `NumberFormat` from both XLSX (including Excel's built-in formats, which files store only by id) and ODS. `DateTime` cells written without a format use the library defaults (`yyyy-mm-dd` or `yyyy-mm-dd hh:mm:ss`) and import with no `Style`.
 
+### Formatted Values
+
+`Value` always holds the raw value (`1234.5`, `2021-03-15T00:00:00`). To get the text a spreadsheet application would show, call `GetFormattedValue()`, which applies the cell's `NumberFormat`:
+
+```csharp
+var cell = sheet.GetCell(2, 3);
+cell.Value;                                        // "1234.5"
+cell.GetFormattedValue();                          // "$1,234.50" with the format "$"#,##0.00
+cell.GetFormattedValue(new CultureInfo("de-DE"));  // "$1.234,50"
+```
+
+It supports the same codes as the ODS translation in the table above. Numbers round half away from zero, as in Excel. A number with a date format is read as a date serial, and a date with a number format shows its serial. Without a format, or with `General`:
+
+| Cell type | Result |
+|-----------|--------|
+| `DateTime` | `2024-01-31`, or `2024-01-31 13:45:00` when there's a time |
+| `Boolean` | `TRUE` or `FALSE` (whatever the format) |
+| Others | `Value` unchanged |
+
+Codes with several sections, as Excel writes for its Currency and Accounting formats and for dates picked in Format Cells, pick the section the way Excel does:
+
+| Sections | Used for |
+|----------|----------|
+| 1 | Every number |
+| 2 | Positive and zero; negative |
+| 3 | Positive; negative; zero |
+| 4 | Positive; negative; zero; text |
+
+The negative section gets the number without its sign, so `#,##0.00;(#,##0.00)` shows `-1234.5` as `(1,234.50)`. A section containing `@` is the text section wherever it appears (`m/d/yy;@`). `@` stands for the cell's text, so `"ID-"@` shows `00123` as `ID-00123`. Text cells with no text section are returned unchanged. Colors such as `[Red]` are ignored.
+
+Padding (`_)`, `_(`) is shown as a space between other characters but trimmed from the ends, so Excel's Currency format gives `$1,234.50` rather than `$1,234.50 `. Fill (`* `) is dropped. Literal spaces in the code are kept.
+
+Codes it can't apply (conditions such as `[>100]`, scientific notation, fractions, elapsed time) return `Value` unchanged rather than throwing, as do values that don't match their type.
+
+The invariant culture is used by default, so the result doesn't depend on the machine's locale. Pass a culture to use its decimal and group separators, month and day names, and AM/PM designators. The separators in the code itself (`,` and `.`) always mean "group" and "decimal".
+
+Like Excel, a code whose decimals are all optional keeps the decimal separator for whole numbers: `0.##` shows `1` as `1.`. LibreOffice drops it.
+
+## Sheet Visibility
+
+Set `Visibility` on `oSpreadsheet` to hide a sheet's tab, for example to keep lookup data out of the reader's way:
+
+```csharp
+var lookup = workbook.AddSheet("Lookup");
+lookup.Visibility = SheetVisibility.Hidden;
+```
+
+| Value | Meaning |
+|-------|---------|
+| `Visible` | The default |
+| `Hidden` | The tab is hidden; readers can unhide it from the application's menu |
+| `VeryHidden` | XLSX only: the sheet can be unhidden only with a macro. ODS has no equivalent, so it is written as hidden and `Validate(ValidationFileFormat.Ods)` warns with `WB_SHEET_VERY_HIDDEN_UNSUPPORTED` |
+
+Visibility is read on import from both XLSX and ODS. At least one sheet must stay visible. Otherwise `Validate()` reports `WB_NO_VISIBLE_SHEET`, which is an error for XLSX because Excel rejects the file, and a warning for ODS because LibreOffice unhides a sheet when it opens the file. Generated files open on the first visible sheet. Delimited files have no sheets, so `GenerateCsvFileAsync()` ignores visibility and writes the first sheet as usual.
+
 ## Freeze Panes
 
 Sheets support freezing rows and columns via `FreezeRows` and `FreezeColumns` properties on `oSpreadsheet`.

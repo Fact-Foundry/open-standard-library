@@ -40,6 +40,13 @@
         /// </summary>
         public bool EscapeFormulaLikeValues { get; set; }
 
+        /// <summary>
+        /// A .NET date format string (e.g. <c>yyyy-MM-dd</c> or <c>MM/dd/yyyy</c>) applied to <see cref="CellValueType.DateTime"/>
+        /// cells in delimited output, formatted with the invariant culture. When null or empty, values are written as stored.
+        /// Values that don't parse as dates are written as stored. Does not apply to ODS or XLSX.
+        /// </summary>
+        public string? DelimitedDateFormat { get; set; }
+
         public List<oSpreadsheet> Sheets { get; set; }
 
         /// <summary>
@@ -56,6 +63,12 @@
         /// </summary>
         public Validation.ValidationResult Validate(Validation.ValidationFileFormat format, Validation.ValidationOptions options) =>
             Validation.WorkbookValidator.Validate(this, format, options);
+
+        /// <summary>
+        /// The sheet a generated file opens on: the first visible sheet, or the first sheet if none is visible.
+        /// </summary>
+        internal oSpreadsheet? ActiveSheet() =>
+            Sheets.FirstOrDefault(s => s.Visibility == SheetVisibility.Visible) ?? Sheets.FirstOrDefault();
 
         public oSpreadsheet AddSheet()
         {

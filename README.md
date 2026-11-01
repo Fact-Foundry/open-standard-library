@@ -18,13 +18,16 @@ A .NET library for reading and creating spreadsheet files in ODS, XLSX, and deli
 - **Cell value types** — String, Float, Boolean, DateTime, and Int64
 - **Cell styling** — bold, italic, underline, font color/name/size, background color, borders (thin/medium/thick with color per edge), and text wrapping. Written and read back for both XLSX and ODS
 - **Number formats** — `CellStyle.NumberFormat` takes an Excel format code (`#,##0.00`, `0%`, `"$"#,##0.00`, `mmm d, yyyy`, `h:mm AM/PM`, ...). Written to XLSX as-is and translated to ODS data styles; read back on import from both formats
+- **Formatted values** — `GetFormattedValue()` returns a cell's value as a spreadsheet app displays it (`1234.5` with `"$"#,##0.00` becomes `$1,234.50`), using the invariant culture or one you pass
 - **Column widths** — manual `SetColumnWidth()` or automatic `AutoFitColumns()` with min/max constraints. Written and read back for both XLSX and ODS
 - **Freeze panes** — freeze rows and/or columns with `FreezeRows` and `FreezeColumns`
+- **Sheet visibility** — hide sheets with `Visibility` (`Hidden`, or `VeryHidden` in XLSX); read and written in both XLSX and ODS
 - **Auto-filters** — `SetAutoFilter()` for the full range or a custom range
 - **Header row detection** — `HasHeaderRow`, `HeaderNames`, and `GetColumn(string)` for column-name-based access. Auto-detected on XLSX/ODS import when freeze panes or auto-filters are present
 - **Streaming CSV reader** — `ReadCsvRowsAsync()` reads rows one at a time via `IAsyncEnumerable` with optional header detection and row limit
 - **RFC 4180 quoting** — delimited import handles quoted and unquoted values, including delimiters, doubled quotes, and line breaks inside quoted values
 - **File encoding options** — UTF-8 (default), ASCII, Unicode (UTF-16), and UTF-32 for delimited files, on both export and import
+- **Date format for delimited export** — `DelimitedDateFormat` (e.g. `yyyy-MM-dd`) writes every DateTime cell in one format, independent of the machine's locale
 - **Epoch conversion** — `FromEpochSeconds()`, `FromEpochMilliseconds()`, `ToEpochSeconds()`, `ToEpochMilliseconds()` extension methods on cells
 - **Formulas** — set `Formula` on a cell using Excel syntax (`=SUM(A1:A10)`); written to and read from XLSX and ODS, with automatic translation to ODS OpenFormula syntax. The library does not calculate results — see [Formulas](#formulas)
 - **File validation** — `SpreadsheetValidator` checks that XLSX, ODS, and delimited files are well-formed without importing them, returning structured errors and warnings (sheet, cell, row, rule code, message). Useful for vetting files produced by LLMs or other tools before they reach users

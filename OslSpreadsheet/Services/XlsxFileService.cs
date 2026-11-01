@@ -34,7 +34,7 @@ namespace OslSpreadsheet.Services
                 files.Add(new InMemoryFile
                 {
                     FileName = $"xl/worksheets/sheet{sheet.Index}.xml",
-                    Content = BuildWorksheet(sheet, styleIndexMap, isActiveSheet: sheet == workbook.Sheets[0])
+                    Content = BuildWorksheet(sheet, styleIndexMap, isActiveSheet: sheet == workbook.ActiveSheet())
                 });
             }
 
@@ -123,6 +123,12 @@ namespace OslSpreadsheet.Services
                 if (sheetEntry == null) continue;
 
                 var sheet = workbook.AddSheet(sheetName);
+                sheet.Visibility = sheetEl.Attribute("state")?.Value switch
+                {
+                    "hidden" => SheetVisibility.Hidden,
+                    "veryHidden" => SheetVisibility.VeryHidden,
+                    _ => SheetVisibility.Visible
+                };
 
                 XDocument sheetDoc;
                 using (var sheetStream = sheetEntry.Open())
@@ -158,7 +164,9 @@ namespace OslSpreadsheet.Services
                         var cellRef = cellEl.Attribute("r")?.Value;
                         if (cellRef == null) continue;
 
-                        var (rowNum, colNum) = ParseCellRef(cellRef);
+                        var (rowNum, colNum) = TryParseCellRef(cellRef)
+                            ?? throw new OoxSpreadsheet.SpreadsheetImportException(
+                                $"Sheet \"{sheetName}\" has a cell with reference \"{cellRef}\", which is not a valid position. References are a column of uppercase letters A to XFD followed by a row of 1 to 1048576, such as B12.");
                         var cellType = cellEl.Attribute("t")?.Value;
                         var rawValue = cellEl.Element(mainNs + "v")?.Value ?? "";
 
@@ -168,8 +176,9 @@ namespace OslSpreadsheet.Services
                         switch (cellType)
                         {
                             case "s": // shared string index
+                                // An index outside the table, in either direction, is empty text rather than a failed import
                                 var idx = int.TryParse(rawValue, out int si) ? si : 0;
-                                value = idx < sharedStrings.Count ? sharedStrings[idx] : "";
+                                value = idx >= 0 && idx < sharedStrings.Count ? sharedStrings[idx] : "";
                                 break;
                             case "inlineStr":
                                 value = string.Concat(cellEl.Descendants(mainNs + "t").Select(t => t.Value));
@@ -224,13 +233,10 @@ namespace OslSpreadsheet.Services
                 var autoFilter = sheetDoc.Descendants(mainNs + "autoFilter").FirstOrDefault();
                 if (autoFilter?.Attribute("ref")?.Value is string afRef)
                 {
+                    // A malformed filter range is dropped rather than failing the import; the cells are what matter
                     var parts = afRef.Split(':');
-                    if (parts.Length == 2)
-                    {
-                        var (startRow, startCol) = ParseCellRef(parts[0]);
-                        var (endRow, endCol) = ParseCellRef(parts[1]);
+                    if (parts.Length == 2 && TryParseCellRef(parts[0]) is var (startRow, startCol) && TryParseCellRef(parts[1]) is var (endRow, endCol))
                         sheet.AutoFilterRange = (startRow, startCol, endRow, endCol);
-                    }
                 }
 
                 if ((sheet.AutoFilterRange?.StartRow == 1) || sheet.FreezeRows >= 1)
@@ -259,16 +265,27 @@ namespace OslSpreadsheet.Services
             return string.IsNullOrEmpty(text) ? null : FormulaTranslator.FromXlsx(text);
         }
 
-        private static (int row, int col) ParseCellRef(string cellRef)
+        private const int MaxRows = 1_048_576;
+        private const int MaxColumns = 16_384;
+
+        /// <summary>
+        /// Parses an A1-style reference into a 1-based position, or returns null if it isn't one: the column must be
+        /// one to three uppercase ASCII letters and the row one to seven digits, and both must be within the sheet grid.
+        /// A file is untrusted input, so nothing here may produce a position the model can't hold.
+        /// </summary>
+        internal static (int row, int col)? TryParseCellRef(string cellRef)
         {
             int i = 0;
-            while (i < cellRef.Length && char.IsLetter(cellRef[i])) i++;
+            while (i < cellRef.Length && char.IsAsciiLetterUpper(cellRef[i])) i++;
+            if (i is 0 or > 3 || i == cellRef.Length || cellRef.Length - i > 7) return null;
 
             int col = 0;
             foreach (char c in cellRef[..i])
                 col = col * 26 + (c - 'A' + 1);
 
-            return (int.Parse(cellRef[i..]), col);
+            if (!int.TryParse(cellRef.AsSpan(i), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int row)) return null;
+            if (row < 1 || row > MaxRows || col > MaxColumns) return null;
+            return (row, col);
         }
 
         private static byte[] Utf8(string xml) => Encoding.UTF8.GetBytes(xml);
@@ -299,9 +316,21 @@ namespace OslSpreadsheet.Services
             var sb = new StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
             sb.Append("<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
+            // Excel opens on tab 0 unless told otherwise, which is wrong when that sheet is hidden
+            var activeTab = workbook.Sheets.IndexOf(workbook.ActiveSheet()!);
+            if (activeTab > 0)
+                sb.Append($"<bookViews><workbookView activeTab=\"{activeTab}\"/></bookViews>");
             sb.Append("<sheets>");
             foreach (var sheet in workbook.Sheets)
-                sb.Append($"<sheet name=\"{SecurityElement.Escape(sheet.SheetName)}\" sheetId=\"{sheet.Index}\" r:id=\"rId{sheet.Index}\"/>");
+            {
+                var state = sheet.Visibility switch
+                {
+                    SheetVisibility.Hidden => " state=\"hidden\"",
+                    SheetVisibility.VeryHidden => " state=\"veryHidden\"",
+                    _ => ""
+                };
+                sb.Append($"<sheet name=\"{SecurityElement.Escape(sheet.SheetName)}\" sheetId=\"{sheet.Index}\"{state} r:id=\"rId{sheet.Index}\"/>");
+            }
             sb.Append("</sheets>");
             // The library doesn't calculate formulas, so ask the application to compute them when the file opens
             if (workbook.Sheets.Any(s => s.Cells.Any(c => FormulaTranslator.Normalize(c.Formula) != null)))

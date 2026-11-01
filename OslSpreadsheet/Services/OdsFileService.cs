@@ -18,68 +18,58 @@ namespace OslSpreadsheet.Services
 
         public async Task<byte[]> GenerateFileAsync(oWorkbook workbook)
         {
-            byte[] output;
+            var (content, hasDateOnly, hasDateTime, customDataStyles) = GenerateContentFile(workbook);
+            var meta = GenerateMetaFile(workbook);
+            var style = GenerateStyleFile(workbook);
 
-            try
+            var manifest = new ODManifest();
+            bool hasSettings = workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0)
+                || workbook.ActiveSheet() != workbook.Sheets.FirstOrDefault();
+            if (hasSettings)
+                manifest.fileEntries.Add(new ODManifest.FileEntry() { FullPath = "settings.xml", MediaType = "text/xml" });
+
+            // Add models to a file list for compression
+            // mimetype must be first and uncompressed per ODS spec
+            List<InMemoryFile> files = new()
             {
-                var (content, hasDateOnly, hasDateTime, customDataStyles) = GenerateContentFile(workbook);
-                var meta = GenerateMetaFile(workbook);
-                var style = GenerateStyleFile(workbook);
-
-                var manifest = new ODManifest();
-                bool hasSettings = workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0);
-                if (hasSettings)
-                    manifest.fileEntries.Add(new ODManifest.FileEntry() { FullPath = "settings.xml", MediaType = "text/xml" });
-
-                // Add models to a file list for compression
-                // mimetype must be first and uncompressed per ODS spec
-                List<InMemoryFile> files = new()
+                new InMemoryFile()
                 {
-                    new InMemoryFile()
-                    {
-                        FileName = "mimetype",
-                        Content = Encoding.ASCII.GetBytes("application/vnd.oasis.opendocument.spreadsheet"),
-                        Store = true
-                    },
-                    new InMemoryFile()
-                    {
-                        FileName = "META-INF/manifest.xml",
-                        Content = await XmlService.ConvertToXmlAsync(manifest)
-                    },
-                    new InMemoryFile()
-                    {
-                        FileName = "content.xml",
-                        Content = InjectOdsDataStyles(await XmlService.ConvertToXmlAsync(content), hasDateOnly, hasDateTime, customDataStyles)
-                    },
-                    new InMemoryFile()
-                    {
-                        FileName = "meta.xml",
-                        Content = await XmlService.ConvertToXmlAsync(meta)
-                    },
-                    new InMemoryFile()
-                    {
-                        FileName = "styles.xml",
-                        Content = await XmlService.ConvertToXmlAsync(style)
-                    }
-                };
-
-                if (hasSettings)
+                    FileName = "mimetype",
+                    Content = Encoding.ASCII.GetBytes("application/vnd.oasis.opendocument.spreadsheet"),
+                    Store = true
+                },
+                new InMemoryFile()
                 {
-                    files.Add(new InMemoryFile()
-                    {
-                        FileName = "settings.xml",
-                        Content = BuildSettingsFile(workbook)
-                    });
+                    FileName = "META-INF/manifest.xml",
+                    Content = await XmlService.ConvertToXmlAsync(manifest)
+                },
+                new InMemoryFile()
+                {
+                    FileName = "content.xml",
+                    Content = InjectOdsDataStyles(await XmlService.ConvertToXmlAsync(content), hasDateOnly, hasDateTime, customDataStyles)
+                },
+                new InMemoryFile()
+                {
+                    FileName = "meta.xml",
+                    Content = await XmlService.ConvertToXmlAsync(meta)
+                },
+                new InMemoryFile()
+                {
+                    FileName = "styles.xml",
+                    Content = await XmlService.ConvertToXmlAsync(style)
                 }
+            };
 
-                output = await ZipService.GenerateZipAsync(files);
-            }
-            catch
+            if (hasSettings)
             {
-                throw new Exception("There was an issue compressing the file.");
+                files.Add(new InMemoryFile()
+                {
+                    FileName = "settings.xml",
+                    Content = BuildSettingsFile(workbook)
+                });
             }
 
-            return output;
+            return await ZipService.GenerateZipAsync(files);
         }
 
         public async Task<oWorkbook> GenerateModel(byte[] file, OoxSpreadsheet.ImportOptions options)
@@ -104,11 +94,14 @@ namespace OslSpreadsheet.Services
 
             var cellStyles = await ReadCellStylesAsync(doc, archive);
             var columnWidths = ReadColumnWidths(doc);
+            var hiddenTableStyles = ReadHiddenTableStyles(doc);
 
             foreach (var table in doc.Descendants(tableNs + "table"))
             {
                 var sheetName = table.Attribute(tableNs + "name")?.Value ?? "Sheet";
                 var sheet = workbook.AddSheet(sheetName);
+                if (table.Attribute(tableNs + "style-name")?.Value is string tableStyle && hiddenTableStyles.Contains(tableStyle))
+                    sheet.Visibility = SheetVisibility.Hidden;
 
                 // Walk the column declarations (which may be nested in header/group wrappers) in order, collecting
                 // widths and each column's default cell style, which applications use instead of styling every cell.
@@ -275,8 +268,9 @@ namespace OslSpreadsheet.Services
                 var parts = targetAddr.Split(':');
                 if (parts.Length != 2) continue;
 
-                var (sheetName1, startRow, startCol) = ParseOdsCellAddress(parts[0]);
-                var (_, endRow, endCol) = ParseOdsCellAddress(parts[1]);
+                // A malformed filter range is dropped rather than failing the import; the cells are what matter
+                if (TryParseOdsCellAddress(parts[0]) is not var (sheetName1, startRow, startCol) || TryParseOdsCellAddress(parts[1]) is not var (_, endRow, endCol))
+                    continue;
 
                 var sheet = workbook.Sheets.FirstOrDefault(s => s.SheetName == sheetName1);
                 if (sheet != null)
@@ -308,7 +302,8 @@ namespace OslSpreadsheet.Services
                     Name = styleName,
                     Family = "table",
                     MasterPageName = masterPageName,
-                    tableProperties = new()
+                    // ODS has no "very hidden", so it is written as hidden
+                    tableProperties = new() { Display = s.Visibility == SheetVisibility.Visible ? "true" : "false" }
                 });
 
                 var table = new ODContent.Table()
@@ -347,115 +342,27 @@ namespace OslSpreadsheet.Services
                         table.tableColumns.Add(new ODContent.Table.TableColumn() { NumberColumnsRepeated = remaining.ToString() });
                 }
 
-                if (s.Cells.Any())
+                // Visit only the cells that exist and write repeat markers for the gaps, so a sheet holding A1 and
+                // XFD1048576 costs two cells rather than a walk over every position between them
+                int previousRow = 0;
+                foreach (var rowGroup in s.Cells.GroupBy(c => c.Row).OrderBy(g => g.Key))
                 {
-                    int rowCount = s.RowCount;
-                    int colCount = s.ColumnCount;
+                    AddEmptyRows(table, rowGroup.Key - previousRow - 1);
 
-                    for (int r = 1; r <= rowCount; r++)
+                    var tableRow = new ODContent.Table.TableRow();
+                    int previousCol = 0;
+                    foreach (var cell in rowGroup.GroupBy(c => c.Column).Select(g => g.Last()).OrderBy(c => c.Column))
                     {
-                        var tableRow = new ODContent.Table.TableRow();
-
-                        for (int c = 1; c <= colCount; c++)
-                        {
-                            var cell = s.GetCell(r, c);
-
-                            if (cell != null)
-                            {
-                                var cellStyleName = "ce1";
-                                if (CellStyleMapKey(cell) is string mapKey && cellStyleMap.TryGetValue(mapKey, out var mapped))
-                                    cellStyleName = mapped;
-
-                                var tableCell = new ODContent.Table.TableRow.TableCell()
-                                {
-                                    StyleName = cellStyleName,
-                                    TextValue = cell.Value
-                                };
-
-                                if (cell.ValueType == CellValueType.Float || cell.ValueType == CellValueType.Int64)
-                                {
-                                    // Percentage and currency formats have their own ODS value types
-                                    var formatCode = CustomFormatCode(cell);
-                                    tableCell.ValueType = (formatCode != null ? NumberFormatTranslator.OdsValueType(formatCode) : null) ?? "float";
-                                    tableCell.NumericValue = cell.Value;
-                                    if (tableCell.ValueType == "currency")
-                                        tableCell.Currency = NumberFormatTranslator.CurrencyCode(NumberFormatTranslator.Parse(formatCode!).CurrencySymbol);
-                                }
-                                else if (cell.ValueType == CellValueType.Boolean)
-                                {
-                                    tableCell.ValueType = "boolean";
-                                    tableCell.BooleanValue = cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "true" : "false";
-                                }
-                                else if (cell.ValueType == CellValueType.DateTime)
-                                {
-                                    tableCell.ValueType = "date";
-                                    tableCell.DateValue = cell.Value;
-                                }
-                                else
-                                {
-                                    tableCell.ValueType = "string";
-                                }
-
-                                if (FormulaTranslator.Normalize(cell.Formula) is string formula)
-                                {
-                                    tableCell.Formula = FormulaTranslator.ToOpenFormula(formula);
-
-                                    // Without a cached result, leave the cell untyped so the application calculates it on load
-                                    if (string.IsNullOrEmpty(cell.Value))
-                                    {
-                                        tableCell.ValueType = null;
-                                        tableCell.NumericValue = null;
-                                        tableCell.BooleanValue = null;
-                                        tableCell.DateValue = null;
-                                        tableCell.TextValue = null;
-                                    }
-                                }
-
-                                tableRow.Cells.Add(tableCell);
-                            }
-                            else
-                            {
-                                tableRow.Cells.Add(new ODContent.Table.TableRow.TableCell());
-                            }
-                        }
-
-                        // Trailing empty columns filler
-                        tableRow.Cells.Add(new ODContent.Table.TableRow.TableCell()
-                        {
-                            NumberColumnsRepeated = (16384 - colCount).ToString()
-                        });
-
-                        table.Rows.Add(tableRow);
+                        AddEmptyCells(tableRow, cell.Column - previousCol - 1);
+                        tableRow.Cells.Add(BuildOdsCell(cell, cellStyleMap));
+                        previousCol = cell.Column;
                     }
+                    AddEmptyCells(tableRow, MaxColumns - previousCol);
 
-                    // Trailing empty rows filler
-                    table.Rows.Add(new ODContent.Table.TableRow()
-                    {
-                        NumberRowsRepeated = (1048576 - rowCount).ToString(),
-                        Cells = new List<ODContent.Table.TableRow.TableCell>()
-                        {
-                            new ODContent.Table.TableRow.TableCell()
-                            {
-                                NumberColumnsRepeated = "16384"
-                            }
-                        }
-                    });
+                    table.Rows.Add(tableRow);
+                    previousRow = rowGroup.Key;
                 }
-                else
-                {
-                    // Empty sheet — filler row
-                    table.Rows.Add(new ODContent.Table.TableRow()
-                    {
-                        NumberRowsRepeated = "1048576",
-                        Cells = new List<ODContent.Table.TableRow.TableCell>()
-                        {
-                            new ODContent.Table.TableRow.TableCell()
-                            {
-                                NumberColumnsRepeated = "16384"
-                            }
-                        }
-                    });
-                }
+                AddEmptyRows(table, MaxRows - previousRow);
 
                 file.body.spreadsheet.Tables.Add(table);
             }
@@ -484,6 +391,85 @@ namespace OslSpreadsheet.Services
             }
 
             return (file, hasDateOnly, hasDateTime, customDataStyles);
+        }
+
+        /// <summary>
+        /// Adds a filler row covering <paramref name="count"/> empty rows (no rows when count is zero or less).
+        /// </summary>
+        private static void AddEmptyRows(ODContent.Table table, int count)
+        {
+            if (count <= 0) return;
+            table.Rows.Add(new ODContent.Table.TableRow()
+            {
+                NumberRowsRepeated = count == 1 ? null : count.ToString(),
+                Cells = new List<ODContent.Table.TableRow.TableCell>()
+                {
+                    new ODContent.Table.TableRow.TableCell() { NumberColumnsRepeated = MaxColumns.ToString() }
+                }
+            });
+        }
+
+        /// <summary>
+        /// Adds a filler cell covering <paramref name="count"/> empty columns (no cell when count is zero or less).
+        /// </summary>
+        private static void AddEmptyCells(ODContent.Table.TableRow row, int count)
+        {
+            if (count <= 0) return;
+            row.Cells.Add(new ODContent.Table.TableRow.TableCell() { NumberColumnsRepeated = count == 1 ? null : count.ToString() });
+        }
+
+        private static ODContent.Table.TableRow.TableCell BuildOdsCell(oCell cell, Dictionary<string, string> cellStyleMap)
+        {
+            var cellStyleName = "ce1";
+            if (CellStyleMapKey(cell) is string mapKey && cellStyleMap.TryGetValue(mapKey, out var mapped))
+                cellStyleName = mapped;
+
+            var tableCell = new ODContent.Table.TableRow.TableCell()
+            {
+                StyleName = cellStyleName,
+                TextValue = cell.Value
+            };
+
+            if (cell.ValueType == CellValueType.Float || cell.ValueType == CellValueType.Int64)
+            {
+                // Percentage and currency formats have their own ODS value types
+                var formatCode = CustomFormatCode(cell);
+                tableCell.ValueType = (formatCode != null ? NumberFormatTranslator.OdsValueType(formatCode) : null) ?? "float";
+                tableCell.NumericValue = cell.Value;
+                if (tableCell.ValueType == "currency")
+                    tableCell.Currency = NumberFormatTranslator.CurrencyCode(NumberFormatTranslator.Parse(formatCode!).CurrencySymbol);
+            }
+            else if (cell.ValueType == CellValueType.Boolean)
+            {
+                tableCell.ValueType = "boolean";
+                tableCell.BooleanValue = cell.Value.Equals("true", StringComparison.OrdinalIgnoreCase) ? "true" : "false";
+            }
+            else if (cell.ValueType == CellValueType.DateTime)
+            {
+                tableCell.ValueType = "date";
+                tableCell.DateValue = cell.Value;
+            }
+            else
+            {
+                tableCell.ValueType = "string";
+            }
+
+            if (FormulaTranslator.Normalize(cell.Formula) is string formula)
+            {
+                tableCell.Formula = FormulaTranslator.ToOpenFormula(formula);
+
+                // Without a cached result, leave the cell untyped so the application calculates it on load
+                if (string.IsNullOrEmpty(cell.Value))
+                {
+                    tableCell.ValueType = null;
+                    tableCell.NumericValue = null;
+                    tableCell.BooleanValue = null;
+                    tableCell.DateValue = null;
+                    tableCell.TextValue = null;
+                }
+            }
+
+            return tableCell;
         }
 
         /// <summary>
@@ -745,6 +731,22 @@ namespace OslSpreadsheet.Services
         }
 
         /// <summary>
+        /// Names of the table styles that hide their table (<c>table:display="false"</c>).
+        /// </summary>
+        private static HashSet<string> ReadHiddenTableStyles(XDocument contentDoc)
+        {
+            XNamespace styleNs = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
+            XNamespace tableNs = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
+
+            return contentDoc.Descendants(styleNs + "style")
+                .Where(s => (string?)s.Attribute(styleNs + "family") == "table"
+                    && (string?)s.Element(styleNs + "table-properties")?.Attribute(tableNs + "display") == "false")
+                .Select(s => (string?)s.Attribute(styleNs + "name"))
+                .OfType<string>()
+                .ToHashSet();
+        }
+
+        /// <summary>
         /// Parses an ODF length ("1.69cm", "0.5in", "12pt", "20mm") to centimeters.
         /// </summary>
         private static double? ParseLengthCm(string text)
@@ -934,26 +936,19 @@ namespace OslSpreadsheet.Services
             }
         }
 
-        private static (string sheetName, int row, int col) ParseOdsCellAddress(string address)
+        /// <summary>
+        /// Parses an ODS cell address such as <c>Sheet1.$B$3</c> or <c>'My Sheet'.A1</c> into a sheet name and 1-based
+        /// position, or returns null if the cell part isn't a valid position within the sheet grid.
+        /// </summary>
+        private static (string sheetName, int row, int col)? TryParseOdsCellAddress(string address)
         {
             var dotIdx = address.LastIndexOf('.');
             var sheetName = dotIdx >= 0 ? address[..dotIdx] : "";
-            var cellRef = dotIdx >= 0 ? address[(dotIdx + 1)..] : address;
+            if (sheetName.Length >= 2 && sheetName.StartsWith('\'') && sheetName.EndsWith('\''))
+                sheetName = sheetName[1..^1].Replace("''", "'");
 
-            int i = 0;
-            while (i < cellRef.Length && cellRef[i] == '$') i++;
-            int colStart = i;
-            while (i < cellRef.Length && char.IsLetter(cellRef[i])) i++;
-            var colPart = cellRef[colStart..i];
-
-            while (i < cellRef.Length && cellRef[i] == '$') i++;
-            var rowPart = cellRef[i..];
-
-            int col = 0;
-            foreach (char c in colPart)
-                col = col * 26 + (char.ToUpper(c) - 'A' + 1);
-
-            return (sheetName, int.Parse(rowPart), col);
+            var cellRef = (dotIdx >= 0 ? address[(dotIdx + 1)..] : address).Replace("$", "");
+            return XlsxFileService.TryParseCellRef(cellRef) is var (row, col) ? (sheetName, row, col) : null;
         }
 
         private static string FormatOdsBorder(CellBorder b)
@@ -996,6 +991,10 @@ namespace OslSpreadsheet.Services
             }
 
             sb.Append("</config:config-item-map-named>");
+            // LibreOffice opens on the first table unless told otherwise, which is wrong when that table is hidden
+            var activeSheet = workbook.ActiveSheet();
+            if (activeSheet != null && activeSheet != workbook.Sheets[0])
+                sb.Append($"<config:config-item config:name=\"ActiveTable\" config:type=\"string\">{SecurityElement.Escape(activeSheet.SheetName)}</config:config-item>");
             sb.Append("</config:config-item-map-entry>");
             sb.Append("</config:config-item-map-indexed>");
             sb.Append("</config:config-item-set>");

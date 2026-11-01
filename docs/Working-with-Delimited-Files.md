@@ -47,6 +47,18 @@ The code above generates the following output:
 "5"" Fitting","10.20"
 ```
 
+## Date Format
+
+By default a `DateTime` cell is written exactly as its `Value` is stored. Dates imported from XLSX, or created with `FromEpochSeconds()`, are stored as `2024-01-31T00:00:00`. Dates imported from ODS keep whatever form the file used. To write every date in one format, set `DelimitedDateFormat` to a .NET date format string:
+
+```csharp
+workbook.DelimitedDateFormat = "yyyy-MM-dd";      // 2024-01-31
+workbook.DelimitedDateFormat = "MM/dd/yyyy";      // 01/31/2024
+workbook.DelimitedDateFormat = "yyyy-MM-dd HH:mm"; // 2024-01-31 13:45
+```
+
+The format uses .NET tokens, not Excel ones: `MM` is the month and `mm` is minutes. Dates are formatted with the invariant culture, so month names are in English and the output doesn't depend on the machine's locale. Only cells typed `DateTime` are changed; text that looks like a date is left alone. A format .NET can't use (such as `%`) is reported by `Validate(ValidationFileFormat.Delimited)` as `WB_DELIMITED_DATE_FORMAT_INVALID`, and `GenerateCsvFileAsync()` throws `InvalidWorkbookException`. The setting has no effect on XLSX or ODS output.
+
 ## Formula Injection
 
 Spreadsheet applications evaluate a CSV value that starts with `=`, `+`, `-`, `@`, a tab, or a carriage return as a formula when the file is opened. A value such as `=HYPERLINK("http://evil")` or `=cmd|'/c calc'!A0` supplied by a user or an LLM therefore becomes live when the recipient opens the file ("CSV injection"). The library writes values verbatim by default. To protect recipients, turn on escaping:

@@ -30,6 +30,13 @@
 
         public int Index { get => _index; }
 
+        /// <summary>
+        /// Whether the sheet's tab is shown. Hidden sheets can be unhidden from the application's menus; very hidden sheets
+        /// (XLSX only) can be unhidden only by a macro. ODS has no very hidden state, so such sheets are written as hidden.
+        /// At least one sheet in a workbook must be visible.
+        /// </summary>
+        public SheetVisibility Visibility { get; set; } = SheetVisibility.Visible;
+
         public int FreezeRows { get; set; }
 
         public int FreezeColumns { get; set; }
@@ -123,25 +130,18 @@
 
         private oCell _AddCell(oCell cell)
         {
-            try
+            lock (this)
             {
-                lock (this)
-                {
-                    EnsureIndex();
+                EnsureIndex();
 
-                    if (_cellIndex.TryGetValue((cell.Row, cell.Column), out var existing))
-                        _cells[_cells.IndexOf(existing)] = cell;
-                    else
-                        _cells.Add(cell);
+                if (_cellIndex.TryGetValue((cell.Row, cell.Column), out var existing))
+                    _cells[_cells.IndexOf(existing)] = cell;
+                else
+                    _cells.Add(cell);
 
-                    _cellIndex[(cell.Row, cell.Column)] = cell;
+                _cellIndex[(cell.Row, cell.Column)] = cell;
 
-                    return cell;
-                }
-            }
-            catch
-            {
-                throw new Exception("There was an error adding a new cell to the spreadsheet");
+                return cell;
             }
         }
 
@@ -218,5 +218,12 @@
 
             return retVal;
         }
+    }
+
+    public enum SheetVisibility
+    {
+        Visible,
+        Hidden,
+        VeryHidden
     }
 }

@@ -33,51 +33,68 @@ namespace OslSpreadsheet.Services
         /// </summary>
         internal static void EnforceSizeLimit(ZipArchive archive, OoxSpreadsheet.ImportOptions options)
         {
-            long total = 0;
-            foreach (var entry in archive.Entries)
-                total += entry.Length;
-
-            if (total > options.MaxUncompressedBytes)
+            if (!DeclaredSizeWithinLimit(archive.Entries.Select(e => e.Length), options.MaxUncompressedBytes, out long declared))
                 throw new OoxSpreadsheet.ImportLimitExceededException(
-                    $"The file declares {total:N0} bytes of uncompressed content, which exceeds the import limit of {options.MaxUncompressedBytes:N0} bytes (ImportOptions.MaxUncompressedBytes).");
+                    $"The file declares at least {declared:N0} bytes of uncompressed content, which exceeds the import limit of {options.MaxUncompressedBytes:N0} bytes (ImportOptions.MaxUncompressedBytes).");
         }
 
         /// <summary>
-        /// Serializes an object to UTF-8 encoded XML bytes.
+        /// Checks the declared uncompressed sizes of a package's entries against a limit. Each entry is checked on its own
+        /// and the total is summed with overflow detection, because the sizes come from the file: Zip64 lets an entry
+        /// declare up to 2^63 bytes, and three such entries would wrap an unchecked sum to a negative number that
+        /// passes a plain comparison. <paramref name="declared"/> is the total, or the size that failed the check.
+        /// </summary>
+        internal static bool DeclaredSizeWithinLimit(IEnumerable<long> entryLengths, long limit, out long declared)
+        {
+            declared = 0;
+            foreach (var length in entryLengths)
+            {
+                if (length < 0 || length > limit)
+                {
+                    declared = length < 0 ? long.MaxValue : length;
+                    return false;
+                }
+
+                try
+                {
+                    declared = checked(declared + length);
+                }
+                catch (OverflowException)
+                {
+                    declared = long.MaxValue;
+                    return false;
+                }
+
+                if (declared > limit)
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Serializes an object to UTF-8 encoded XML bytes. Serialization errors propagate to the caller so a failure
+        /// is never written into a package as an empty part.
         /// </summary>
         internal static async Task<byte[]> ConvertToXmlAsync(object obj)
         {
-            try
+            XmlSerializer serializer = new(obj.GetType());
+
+            var settings = new XmlWriterSettings
             {
-                XmlSerializer serializer = new(obj.GetType());
+                Indent = false,
+                OmitXmlDeclaration = false,
+                Encoding = new UTF8Encoding(false),
+                DoNotEscapeUriAttributes = true
+            };
 
-                var utf8NoBom = new UTF8Encoding(false);
-                var settings = new XmlWriterSettings
-                {
-                    Indent = false,
-                    OmitXmlDeclaration = false,
-                    Encoding = utf8NoBom,
-                    DoNotEscapeUriAttributes = true
-                };
+            var ns = new XmlSerializerNamespaces();
+            ns.Add(string.Empty, string.Empty);
 
-                var ns = new XmlSerializerNamespaces();
-                ns.Add(string.Empty, string.Empty);
+            await using MemoryStream memoryStream = new();
+            using (var writer = XmlWriter.Create(memoryStream, settings))
+                serializer.Serialize(writer, obj, ns);
 
-                await using MemoryStream memoryStream = new();
-                using var streamWriter = XmlWriter.Create(memoryStream, settings);
-
-                serializer.Serialize(streamWriter, obj, ns);
-
-                var file = memoryStream.ToArray();
-
-                var result = Encoding.UTF8.GetString(file);
-
-                return Encoding.UTF8.GetBytes(result.Replace("utf-8", "UTF-8").Replace("\" />", "\"/>"));
-            }
-            catch
-            {
-                return [];
-            }
+            return memoryStream.ToArray();
         }
     }
 }

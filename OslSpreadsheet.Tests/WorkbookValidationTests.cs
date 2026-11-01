@@ -142,7 +142,7 @@ public class WorkbookValidationTests
     {
         var workbook = new oWorkbook();
         var sheet = workbook.AddSheet("Data");
-        sheet.Cells.Add(new oCell(0, 1) { Value = "x" });
+        sheet.Cells.Add(new oCell(1, 16_385) { Value = "x" });
 
         AssertSingleError(workbook.Validate(), "WB_CELL_POSITION_INVALID");
     }

@@ -61,11 +61,8 @@ namespace OslSpreadsheet.Validation
 
         private bool IndexEntries(ValidationOptions options)
         {
-            long totalSize = 0;
-
             foreach (var entry in _archive.Entries)
             {
-                totalSize += entry.Length;
                 var name = entry.FullName;
 
                 if (name.Contains('\\'))
@@ -86,10 +83,10 @@ namespace OslSpreadsheet.Validation
                 PartNames.Add(name);
             }
 
-            if (totalSize > options.MaxUncompressedBytes)
+            if (!Services.XmlService.DeclaredSizeWithinLimit(_archive.Entries.Select(e => e.Length), options.MaxUncompressedBytes, out long declared))
             {
                 _issues.Error($"{_codePrefix}_ZIP_TOO_LARGE",
-                    $"The archive declares {totalSize:N0} bytes of uncompressed content, which exceeds the limit of {options.MaxUncompressedBytes:N0} bytes.");
+                    $"The archive declares at least {declared:N0} bytes of uncompressed content, which exceeds the limit of {options.MaxUncompressedBytes:N0} bytes.");
                 return false;
             }
 

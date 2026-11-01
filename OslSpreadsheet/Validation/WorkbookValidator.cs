@@ -44,12 +44,55 @@ namespace OslSpreadsheet.Validation
                 issues.Warning($"{Prefix}_DELIMITED_MULTIPLE_SHEETS",
                     $"The workbook has {workbook.Sheets.Count} sheets, but a delimited file can only hold one. Only \"{workbook.Sheets[0].SheetName}\" will be written.");
 
+            if (format == ValidationFileFormat.Delimited && !string.IsNullOrEmpty(workbook.DelimitedDateFormat) && !IsValidDateFormat(workbook.DelimitedDateFormat))
+                issues.Error($"{Prefix}_DELIMITED_DATE_FORMAT_INVALID",
+                    $"DelimitedDateFormat \"{XlsxValidator.Truncate(workbook.DelimitedDateFormat)}\" is not a valid .NET date format string. Use a custom format such as yyyy-MM-dd or MM/dd/yyyy HH:mm.");
+
+            if (format != ValidationFileFormat.Delimited)
+                ValidateVisibility(workbook, format, issues);
+
             var sheetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var sheet in workbook.Sheets)
                 ValidateSheetName(sheet, format, sheetNames, issues);
 
             foreach (var sheet in workbook.Sheets)
                 ValidateSheet(sheet, format, sheetNames, workbook, issues, options);
+        }
+
+        private static void ValidateVisibility(oWorkbook workbook, ValidationFileFormat format, IssueCollector issues)
+        {
+            foreach (var sheet in workbook.Sheets)
+            {
+                if (!Enum.IsDefined(sheet.Visibility))
+                    issues.Error($"{Prefix}_SHEET_VISIBILITY_INVALID",
+                        $"Visibility {(int)sheet.Visibility} is not a SheetVisibility value. Use Visible, Hidden, or VeryHidden.", sheet: sheet.SheetName);
+                else if (format == ValidationFileFormat.Ods && sheet.Visibility == SheetVisibility.VeryHidden)
+                    issues.Warning($"{Prefix}_SHEET_VERY_HIDDEN_UNSUPPORTED",
+                        $"Sheet \"{sheet.SheetName}\" is VeryHidden, which ODS can't express. It will be written as hidden, so users can unhide it.", sheet: sheet.SheetName);
+            }
+
+            // Excel refuses a workbook with no visible sheet; LibreOffice unhides one, so for ODS it's only a warning
+            if (workbook.Sheets.All(s => s.Visibility != SheetVisibility.Visible))
+            {
+                const string message = "Every sheet is hidden. Set at least one sheet's Visibility to Visible.";
+                if (format == ValidationFileFormat.Xlsx)
+                    issues.Error($"{Prefix}_NO_VISIBLE_SHEET", message);
+                else
+                    issues.Warning($"{Prefix}_NO_VISIBLE_SHEET", message);
+            }
+        }
+
+        private static bool IsValidDateFormat(string format)
+        {
+            try
+            {
+                DateTime.MinValue.ToString(format, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
         }
 
         private static void ValidateSheetName(oSpreadsheet sheet, ValidationFileFormat format, HashSet<string> seen, IssueCollector issues)

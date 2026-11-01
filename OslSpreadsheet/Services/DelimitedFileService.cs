@@ -1,4 +1,5 @@
 ﻿using OslSpreadsheet.Models;
+using System.Globalization;
 using System.Text;
 
 namespace OslSpreadsheet.Services
@@ -30,6 +31,7 @@ namespace OslSpreadsheet.Services
             var delimiter = workbook.ColumnDelimeter;
             var colDelimiter = DelimitedParser.GetDelimiter(delimiter);
             var nlDelimiter = GetRowDelimiter(delimiter);
+            var dateFormat = string.IsNullOrEmpty(workbook.DelimitedDateFormat) ? null : workbook.DelimitedDateFormat;
 
             var cells = workbook.Sheets[0].Cells;
             var cols = cells.Max(x => x.Column);
@@ -46,6 +48,9 @@ namespace OslSpreadsheet.Services
                     if (c > 1)
                         result.Append(colDelimiter);
                     var value = lookup.TryGetValue((r, c), out var cell) ? cell.Value ?? "" : "";
+                    if (dateFormat != null && cell?.ValueType == CellValueType.DateTime
+                        && DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                        value = date.ToString(dateFormat, CultureInfo.InvariantCulture);
                     if (workbook.EscapeFormulaLikeValues && cell?.ValueType == CellValueType.String && DelimitedParser.IsFormulaLike(value))
                         value = DelimitedParser.EscapeFormulaLike(value);
                     result.Append(DelimitedParser.FormatValue(value, delimiter));
