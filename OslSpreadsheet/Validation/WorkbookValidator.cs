@@ -44,12 +44,29 @@ namespace OslSpreadsheet.Validation
                 issues.Warning($"{Prefix}_DELIMITED_MULTIPLE_SHEETS",
                     $"The workbook has {workbook.Sheets.Count} sheets, but a delimited file can only hold one. Only \"{workbook.Sheets[0].SheetName}\" will be written.");
 
+            if (format == ValidationFileFormat.Delimited && !string.IsNullOrEmpty(workbook.DelimitedDateFormat) && !IsValidDateFormat(workbook.DelimitedDateFormat))
+                issues.Error($"{Prefix}_DELIMITED_DATE_FORMAT_INVALID",
+                    $"DelimitedDateFormat \"{XlsxValidator.Truncate(workbook.DelimitedDateFormat)}\" is not a valid .NET date format string. Use a custom format such as yyyy-MM-dd or MM/dd/yyyy HH:mm.");
+
             var sheetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var sheet in workbook.Sheets)
                 ValidateSheetName(sheet, format, sheetNames, issues);
 
             foreach (var sheet in workbook.Sheets)
                 ValidateSheet(sheet, format, sheetNames, workbook, issues, options);
+        }
+
+        private static bool IsValidDateFormat(string format)
+        {
+            try
+            {
+                DateTime.MinValue.ToString(format, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
         }
 
         private static void ValidateSheetName(oSpreadsheet sheet, ValidationFileFormat format, HashSet<string> seen, IssueCollector issues)

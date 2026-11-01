@@ -4,6 +4,12 @@ All notable changes to Open Standard Library will be documented in this file.
 
 ---
 
+## Unreleased
+
+### Added
+- **Date format for delimited export** — Added `oWorkbook.DelimitedDateFormat`, a .NET date format string such as `yyyy-MM-dd` or `MM/dd/yyyy`. `GenerateCsvFileAsync()` uses it to re-format every `DateTime` cell with the invariant culture. Previously dates were written exactly as stored, so a date imported from XLSX came out as `2024-01-31T00:00:00`, and a workbook built from several sources could mix formats. Unset by default, which keeps the old output. An unusable format is a `WB_DELIMITED_DATE_FORMAT_INVALID` validation error. See [Working with Delimited Files](Working-with-Delimited-Files.md#date-format)
+- **Tests** — Added 12 delimited date format tests, bringing test count from 372 to 384
+
 ## v1.1.0 — 2026-10-11
 
 Minor version bump because of two breaking changes, both under **Changed** and **Removed** below: `AsFloat<T>(float)` became `AsFloat(double)`, and the unused `SpreadsheetFileFormat` enum was removed. Implementers of `ISpreadsheet` also need the new optional `ImportOptions` parameter on the Import methods. Everything else is additive or a fix.
