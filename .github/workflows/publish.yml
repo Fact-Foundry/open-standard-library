@@ -8,6 +8,11 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Trusted Publishing: GitHub issues this job a short-lived identity token, which NuGet/login exchanges
+    # for a temporary API key. No long-lived key is stored. The nuget.org policy must name this repo and workflow file.
+    permissions:
+      contents: read
+      id-token: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -35,5 +40,11 @@ jobs:
       - name: Pack
         run: dotnet pack OslSpreadsheet/OslSpreadsheet.csproj --configuration Release --no-build --output nupkg /p:PackageVersion=${{ env.VERSION }}
 
+      - name: Log in to NuGet.org
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       - name: Push to NuGet.org
-        run: dotnet nuget push nupkg/*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push nupkg/*.nupkg -k ${{ steps.nuget-login.outputs.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate
