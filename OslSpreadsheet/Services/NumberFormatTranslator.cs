@@ -31,7 +31,8 @@ namespace OslSpreadsheet.Services
             bool Grouping,
             string Prefix,
             string Suffix,
-            IReadOnlyList<(string Type, int Length, string Text)> DateParts)
+            IReadOnlyList<(string Type, int Length, string Text)> DateParts,
+            int MinDecimals = 0)
         {
             /// <summary>
             /// The currency symbol, when the format is a currency: whichever of prefix or suffix carries text.
@@ -76,7 +77,7 @@ namespace OslSpreadsheet.Services
             var parts = new List<(string Type, int Length, string Text)>();   // date parts: y, M (month), m (minute), d, D (weekday), h, s, ampm, text
             var literal = new StringBuilder();
             bool percent = false, hasDigits = false, hasText = false, grouping = false, seenDot = false, unsupported = false;
-            int decimals = 0, minInteger = 0;
+            int decimals = 0, minDecimals = 0, minInteger = 0;
             var prefix = new StringBuilder();
             var suffix = new StringBuilder();
 
@@ -171,7 +172,7 @@ namespace OslSpreadsheet.Services
                 {
                     case '#' or '0' or '?':
                         hasDigits = true;
-                        if (seenDot) decimals++;
+                        if (seenDot) { decimals++; if (c == '0') minDecimals = decimals; }
                         else if (c == '0') minInteger++;
                         break;
                     case ',':
@@ -227,7 +228,7 @@ namespace OslSpreadsheet.Services
             var p = prefix.ToString();
             var s = suffix.ToString();
             var kind = percent ? Kind.Percentage : (p.Trim().Length > 0 || s.Trim().Length > 0) ? Kind.Currency : Kind.Number;
-            return new Spec(kind, decimals, minInteger, grouping, p, s, parts);
+            return new Spec(kind, decimals, minInteger, grouping, p, s, parts, minDecimals);
         }
 
         /// <summary>
@@ -246,7 +247,7 @@ namespace OslSpreadsheet.Services
             }
         }
 
-        private static List<string> SplitSections(string code)
+        internal static List<string> SplitSections(string code)
         {
             var sections = new List<string>();
             var sb = new StringBuilder();

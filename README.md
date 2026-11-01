@@ -18,6 +18,7 @@ A .NET library for reading and creating spreadsheet files in ODS, XLSX, and deli
 - **Cell value types** — String, Float, Boolean, DateTime, and Int64
 - **Cell styling** — bold, italic, underline, font color/name/size, background color, borders (thin/medium/thick with color per edge), and text wrapping. Written and read back for both XLSX and ODS
 - **Number formats** — `CellStyle.NumberFormat` takes an Excel format code (`#,##0.00`, `0%`, `"$"#,##0.00`, `mmm d, yyyy`, `h:mm AM/PM`, ...). Written to XLSX as-is and translated to ODS data styles; read back on import from both formats
+- **Formatted values** — `GetFormattedValue()` returns a cell's value as a spreadsheet app displays it (`1234.5` with `"$"#,##0.00` becomes `$1,234.50`), using the invariant culture or one you pass
 - **Column widths** — manual `SetColumnWidth()` or automatic `AutoFitColumns()` with min/max constraints. Written and read back for both XLSX and ODS
 - **Freeze panes** — freeze rows and/or columns with `FreezeRows` and `FreezeColumns`
 - **Sheet visibility** — hide sheets with `Visibility` (`Hidden`, or `VeryHidden` in XLSX); read and written in both XLSX and ODS
