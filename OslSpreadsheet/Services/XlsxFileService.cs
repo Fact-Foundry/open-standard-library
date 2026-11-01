@@ -176,8 +176,9 @@ namespace OslSpreadsheet.Services
                         switch (cellType)
                         {
                             case "s": // shared string index
+                                // An index outside the table, in either direction, is empty text rather than a failed import
                                 var idx = int.TryParse(rawValue, out int si) ? si : 0;
-                                value = idx < sharedStrings.Count ? sharedStrings[idx] : "";
+                                value = idx >= 0 && idx < sharedStrings.Count ? sharedStrings[idx] : "";
                                 break;
                             case "inlineStr":
                                 value = string.Concat(cellEl.Descendants(mainNs + "t").Select(t => t.Value));

@@ -130,25 +130,18 @@
 
         private oCell _AddCell(oCell cell)
         {
-            try
+            lock (this)
             {
-                lock (this)
-                {
-                    EnsureIndex();
+                EnsureIndex();
 
-                    if (_cellIndex.TryGetValue((cell.Row, cell.Column), out var existing))
-                        _cells[_cells.IndexOf(existing)] = cell;
-                    else
-                        _cells.Add(cell);
+                if (_cellIndex.TryGetValue((cell.Row, cell.Column), out var existing))
+                    _cells[_cells.IndexOf(existing)] = cell;
+                else
+                    _cells.Add(cell);
 
-                    _cellIndex[(cell.Row, cell.Column)] = cell;
+                _cellIndex[(cell.Row, cell.Column)] = cell;
 
-                    return cell;
-                }
-            }
-            catch
-            {
-                throw new Exception("There was an error adding a new cell to the spreadsheet");
+                return cell;
             }
         }
 
