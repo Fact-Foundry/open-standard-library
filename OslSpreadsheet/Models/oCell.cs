@@ -6,8 +6,15 @@
 
         private readonly int _columnIndex;
 
+        /// <summary>
+        /// Creates a cell at a 1-based position. Row and column must be at least 1; the upper bounds
+        /// (1,048,576 rows and 16,384 columns) are reported by <c>oWorkbook.Validate()</c>.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">Row or column is less than 1.</exception>
         public oCell(int row, int column)
         {
+            if (row < 1) throw new ArgumentOutOfRangeException(nameof(row), row, "Rows are numbered from 1.");
+            if (column < 1) throw new ArgumentOutOfRangeException(nameof(column), column, "Columns are numbered from 1.");
             _columnIndex = column;
             _rowIndex = row;
         }

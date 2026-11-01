@@ -164,7 +164,9 @@ namespace OslSpreadsheet.Services
                         var cellRef = cellEl.Attribute("r")?.Value;
                         if (cellRef == null) continue;
 
-                        var (rowNum, colNum) = ParseCellRef(cellRef);
+                        var (rowNum, colNum) = TryParseCellRef(cellRef)
+                            ?? throw new OoxSpreadsheet.SpreadsheetImportException(
+                                $"Sheet \"{sheetName}\" has a cell with reference \"{cellRef}\", which is not a valid position. References are a column of uppercase letters A to XFD followed by a row of 1 to 1048576, such as B12.");
                         var cellType = cellEl.Attribute("t")?.Value;
                         var rawValue = cellEl.Element(mainNs + "v")?.Value ?? "";
 
@@ -230,13 +232,10 @@ namespace OslSpreadsheet.Services
                 var autoFilter = sheetDoc.Descendants(mainNs + "autoFilter").FirstOrDefault();
                 if (autoFilter?.Attribute("ref")?.Value is string afRef)
                 {
+                    // A malformed filter range is dropped rather than failing the import; the cells are what matter
                     var parts = afRef.Split(':');
-                    if (parts.Length == 2)
-                    {
-                        var (startRow, startCol) = ParseCellRef(parts[0]);
-                        var (endRow, endCol) = ParseCellRef(parts[1]);
+                    if (parts.Length == 2 && TryParseCellRef(parts[0]) is var (startRow, startCol) && TryParseCellRef(parts[1]) is var (endRow, endCol))
                         sheet.AutoFilterRange = (startRow, startCol, endRow, endCol);
-                    }
                 }
 
                 if ((sheet.AutoFilterRange?.StartRow == 1) || sheet.FreezeRows >= 1)
@@ -265,16 +264,27 @@ namespace OslSpreadsheet.Services
             return string.IsNullOrEmpty(text) ? null : FormulaTranslator.FromXlsx(text);
         }
 
-        private static (int row, int col) ParseCellRef(string cellRef)
+        private const int MaxRows = 1_048_576;
+        private const int MaxColumns = 16_384;
+
+        /// <summary>
+        /// Parses an A1-style reference into a 1-based position, or returns null if it isn't one: the column must be
+        /// one to three uppercase ASCII letters and the row one to seven digits, and both must be within the sheet grid.
+        /// A file is untrusted input, so nothing here may produce a position the model can't hold.
+        /// </summary>
+        internal static (int row, int col)? TryParseCellRef(string cellRef)
         {
             int i = 0;
-            while (i < cellRef.Length && char.IsLetter(cellRef[i])) i++;
+            while (i < cellRef.Length && char.IsAsciiLetterUpper(cellRef[i])) i++;
+            if (i is 0 or > 3 || i == cellRef.Length || cellRef.Length - i > 7) return null;
 
             int col = 0;
             foreach (char c in cellRef[..i])
                 col = col * 26 + (c - 'A' + 1);
 
-            return (int.Parse(cellRef[i..]), col);
+            if (!int.TryParse(cellRef.AsSpan(i), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int row)) return null;
+            if (row < 1 || row > MaxRows || col > MaxColumns) return null;
+            return (row, col);
         }
 
         private static byte[] Utf8(string xml) => Encoding.UTF8.GetBytes(xml);
