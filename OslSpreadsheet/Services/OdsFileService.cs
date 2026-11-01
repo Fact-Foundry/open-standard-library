@@ -27,7 +27,8 @@ namespace OslSpreadsheet.Services
                 var style = GenerateStyleFile(workbook);
 
                 var manifest = new ODManifest();
-                bool hasSettings = workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0);
+                bool hasSettings = workbook.Sheets.Any(s => s.FreezeRows > 0 || s.FreezeColumns > 0)
+                    || workbook.ActiveSheet() != workbook.Sheets.FirstOrDefault();
                 if (hasSettings)
                     manifest.fileEntries.Add(new ODManifest.FileEntry() { FullPath = "settings.xml", MediaType = "text/xml" });
 
@@ -104,11 +105,14 @@ namespace OslSpreadsheet.Services
 
             var cellStyles = await ReadCellStylesAsync(doc, archive);
             var columnWidths = ReadColumnWidths(doc);
+            var hiddenTableStyles = ReadHiddenTableStyles(doc);
 
             foreach (var table in doc.Descendants(tableNs + "table"))
             {
                 var sheetName = table.Attribute(tableNs + "name")?.Value ?? "Sheet";
                 var sheet = workbook.AddSheet(sheetName);
+                if (table.Attribute(tableNs + "style-name")?.Value is string tableStyle && hiddenTableStyles.Contains(tableStyle))
+                    sheet.Visibility = SheetVisibility.Hidden;
 
                 // Walk the column declarations (which may be nested in header/group wrappers) in order, collecting
                 // widths and each column's default cell style, which applications use instead of styling every cell.
@@ -308,7 +312,8 @@ namespace OslSpreadsheet.Services
                     Name = styleName,
                     Family = "table",
                     MasterPageName = masterPageName,
-                    tableProperties = new()
+                    // ODS has no "very hidden", so it is written as hidden
+                    tableProperties = new() { Display = s.Visibility == SheetVisibility.Visible ? "true" : "false" }
                 });
 
                 var table = new ODContent.Table()
@@ -745,6 +750,22 @@ namespace OslSpreadsheet.Services
         }
 
         /// <summary>
+        /// Names of the table styles that hide their table (<c>table:display="false"</c>).
+        /// </summary>
+        private static HashSet<string> ReadHiddenTableStyles(XDocument contentDoc)
+        {
+            XNamespace styleNs = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
+            XNamespace tableNs = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
+
+            return contentDoc.Descendants(styleNs + "style")
+                .Where(s => (string?)s.Attribute(styleNs + "family") == "table"
+                    && (string?)s.Element(styleNs + "table-properties")?.Attribute(tableNs + "display") == "false")
+                .Select(s => (string?)s.Attribute(styleNs + "name"))
+                .OfType<string>()
+                .ToHashSet();
+        }
+
+        /// <summary>
         /// Parses an ODF length ("1.69cm", "0.5in", "12pt", "20mm") to centimeters.
         /// </summary>
         private static double? ParseLengthCm(string text)
@@ -996,6 +1017,10 @@ namespace OslSpreadsheet.Services
             }
 
             sb.Append("</config:config-item-map-named>");
+            // LibreOffice opens on the first table unless told otherwise, which is wrong when that table is hidden
+            var activeSheet = workbook.ActiveSheet();
+            if (activeSheet != null && activeSheet != workbook.Sheets[0])
+                sb.Append($"<config:config-item config:name=\"ActiveTable\" config:type=\"string\">{SecurityElement.Escape(activeSheet.SheetName)}</config:config-item>");
             sb.Append("</config:config-item-map-entry>");
             sb.Append("</config:config-item-map-indexed>");
             sb.Append("</config:config-item-set>");

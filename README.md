@@ -20,6 +20,7 @@ A .NET library for reading and creating spreadsheet files in ODS, XLSX, and deli
 - **Number formats** — `CellStyle.NumberFormat` takes an Excel format code (`#,##0.00`, `0%`, `"$"#,##0.00`, `mmm d, yyyy`, `h:mm AM/PM`, ...). Written to XLSX as-is and translated to ODS data styles; read back on import from both formats
 - **Column widths** — manual `SetColumnWidth()` or automatic `AutoFitColumns()` with min/max constraints. Written and read back for both XLSX and ODS
 - **Freeze panes** — freeze rows and/or columns with `FreezeRows` and `FreezeColumns`
+- **Sheet visibility** — hide sheets with `Visibility` (`Hidden`, or `VeryHidden` in XLSX); read and written in both XLSX and ODS
 - **Auto-filters** — `SetAutoFilter()` for the full range or a custom range
 - **Header row detection** — `HasHeaderRow`, `HeaderNames`, and `GetColumn(string)` for column-name-based access. Auto-detected on XLSX/ODS import when freeze panes or auto-filters are present
 - **Streaming CSV reader** — `ReadCsvRowsAsync()` reads rows one at a time via `IAsyncEnumerable` with optional header detection and row limit

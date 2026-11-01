@@ -34,7 +34,7 @@ namespace OslSpreadsheet.Services
                 files.Add(new InMemoryFile
                 {
                     FileName = $"xl/worksheets/sheet{sheet.Index}.xml",
-                    Content = BuildWorksheet(sheet, styleIndexMap, isActiveSheet: sheet == workbook.Sheets[0])
+                    Content = BuildWorksheet(sheet, styleIndexMap, isActiveSheet: sheet == workbook.ActiveSheet())
                 });
             }
 
@@ -123,6 +123,12 @@ namespace OslSpreadsheet.Services
                 if (sheetEntry == null) continue;
 
                 var sheet = workbook.AddSheet(sheetName);
+                sheet.Visibility = sheetEl.Attribute("state")?.Value switch
+                {
+                    "hidden" => SheetVisibility.Hidden,
+                    "veryHidden" => SheetVisibility.VeryHidden,
+                    _ => SheetVisibility.Visible
+                };
 
                 XDocument sheetDoc;
                 using (var sheetStream = sheetEntry.Open())
@@ -299,9 +305,21 @@ namespace OslSpreadsheet.Services
             var sb = new StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
             sb.Append("<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
+            // Excel opens on tab 0 unless told otherwise, which is wrong when that sheet is hidden
+            var activeTab = workbook.Sheets.IndexOf(workbook.ActiveSheet()!);
+            if (activeTab > 0)
+                sb.Append($"<bookViews><workbookView activeTab=\"{activeTab}\"/></bookViews>");
             sb.Append("<sheets>");
             foreach (var sheet in workbook.Sheets)
-                sb.Append($"<sheet name=\"{SecurityElement.Escape(sheet.SheetName)}\" sheetId=\"{sheet.Index}\" r:id=\"rId{sheet.Index}\"/>");
+            {
+                var state = sheet.Visibility switch
+                {
+                    SheetVisibility.Hidden => " state=\"hidden\"",
+                    SheetVisibility.VeryHidden => " state=\"veryHidden\"",
+                    _ => ""
+                };
+                sb.Append($"<sheet name=\"{SecurityElement.Escape(sheet.SheetName)}\" sheetId=\"{sheet.Index}\"{state} r:id=\"rId{sheet.Index}\"/>");
+            }
             sb.Append("</sheets>");
             // The library doesn't calculate formulas, so ask the application to compute them when the file opens
             if (workbook.Sheets.Any(s => s.Cells.Any(c => FormulaTranslator.Normalize(c.Formula) != null)))

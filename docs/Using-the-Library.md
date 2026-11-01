@@ -73,6 +73,23 @@ XLSX stores the code directly, so any code Excel accepts works there. ODS has no
 
 On import, the format is read back into `NumberFormat` from both XLSX (including Excel's built-in formats, which files store only by id) and ODS. `DateTime` cells written without a format use the library defaults (`yyyy-mm-dd` or `yyyy-mm-dd hh:mm:ss`) and import with no `Style`.
 
+## Sheet Visibility
+
+Set `Visibility` on `oSpreadsheet` to hide a sheet's tab, for example to keep lookup data out of the reader's way:
+
+```csharp
+var lookup = workbook.AddSheet("Lookup");
+lookup.Visibility = SheetVisibility.Hidden;
+```
+
+| Value | Meaning |
+|-------|---------|
+| `Visible` | The default |
+| `Hidden` | The tab is hidden; readers can unhide it from the application's menu |
+| `VeryHidden` | XLSX only: the sheet can be unhidden only with a macro. ODS has no equivalent, so it is written as hidden and `Validate(ValidationFileFormat.Ods)` warns with `WB_SHEET_VERY_HIDDEN_UNSUPPORTED` |
+
+Visibility is read on import from both XLSX and ODS. At least one sheet must stay visible. Otherwise `Validate()` reports `WB_NO_VISIBLE_SHEET`, which is an error for XLSX because Excel rejects the file, and a warning for ODS because LibreOffice unhides a sheet when it opens the file. Generated files open on the first visible sheet. Delimited files have no sheets, so `GenerateCsvFileAsync()` ignores visibility and writes the first sheet as usual.
+
 ## Freeze Panes
 
 Sheets support freezing rows and columns via `FreezeRows` and `FreezeColumns` properties on `oSpreadsheet`.

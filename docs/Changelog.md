@@ -8,7 +8,8 @@ All notable changes to Open Standard Library will be documented in this file.
 
 ### Added
 - **Date format for delimited export** — Added `oWorkbook.DelimitedDateFormat`, a .NET date format string such as `yyyy-MM-dd` or `MM/dd/yyyy`. `GenerateCsvFileAsync()` uses it to re-format every `DateTime` cell with the invariant culture. Previously dates were written exactly as stored, so a date imported from XLSX came out as `2024-01-31T00:00:00`, and a workbook built from several sources could mix formats. Unset by default, which keeps the old output. An unusable format is a `WB_DELIMITED_DATE_FORMAT_INVALID` validation error. See [Working with Delimited Files](Working-with-Delimited-Files.md#date-format)
-- **Tests** — Added 12 delimited date format tests, bringing test count from 372 to 384
+- **Sheet visibility** — Added `oSpreadsheet.Visibility` (`SheetVisibility.Visible`, `Hidden`, `VeryHidden`). Previously hidden sheets imported as visible, and every generated sheet was visible. XLSX reads and writes the sheet's `state`; ODS reads and writes `table:display` on the table style, writing `VeryHidden` as hidden with a `WB_SHEET_VERY_HIDDEN_UNSUPPORTED` warning. `Validate()` reports `WB_NO_VISIBLE_SHEET` when every sheet is hidden (an error for XLSX, a warning for ODS), and the ODS file validator gained a matching `ODS_NO_VISIBLE_SHEET` warning. Generated XLSX and ODS files open on the first visible sheet. Delimited export ignores visibility. See [Using the Library](Using-the-Library.md#sheet-visibility)
+- **Tests** — Added 12 delimited date format tests and 17 sheet visibility tests, bringing test count from 372 to 401
 
 ## v1.1.0 — 2026-10-11
 

@@ -323,6 +323,15 @@ namespace OslSpreadsheet.Validation
                 ValidateTable(table, name ?? "?", part);
             }
 
+            // LibreOffice opens a file whose tables are all hidden by unhiding one, so this is a warning
+            var hiddenTableStyles = root.Descendants(StyleNs + "style")
+                .Where(s => (string?)s.Attribute(StyleNs + "family") == "table"
+                    && (string?)s.Element(StyleNs + "table-properties")?.Attribute(TableNs + "display") == "false")
+                .Select(s => (string?)s.Attribute(StyleNs + "name"))
+                .ToHashSet();
+            if (tables.All(t => (string?)t.Attribute(TableNs + "style-name") is string style && hiddenTableStyles.Contains(style)))
+                _issues.Warning($"{Prefix}_NO_VISIBLE_SHEET", "Every sheet is hidden (table:display=\"false\"). At least one sheet should be visible.", part);
+
             foreach (var range in spreadsheet.Descendants(TableNs + "database-range"))
             {
                 var address = (string?)range.Attribute(TableNs + "target-range-address");

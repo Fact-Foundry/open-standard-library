@@ -30,6 +30,13 @@
 
         public int Index { get => _index; }
 
+        /// <summary>
+        /// Whether the sheet's tab is shown. Hidden sheets can be unhidden from the application's menus; very hidden sheets
+        /// (XLSX only) can be unhidden only by a macro. ODS has no very hidden state, so such sheets are written as hidden.
+        /// At least one sheet in a workbook must be visible.
+        /// </summary>
+        public SheetVisibility Visibility { get; set; } = SheetVisibility.Visible;
+
         public int FreezeRows { get; set; }
 
         public int FreezeColumns { get; set; }
@@ -218,5 +225,12 @@
 
             return retVal;
         }
+    }
+
+    public enum SheetVisibility
+    {
+        Visible,
+        Hidden,
+        VeryHidden
     }
 }

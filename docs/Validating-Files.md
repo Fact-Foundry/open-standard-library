@@ -137,6 +137,9 @@ Rules are prefixed `WB_`:
 | `WB_COLOR_INVALID` | Error | A `FontColor`, `BackgroundColor`, or border `Color` that isn't six hex digits (`#FF0000`; the `#` is optional) |
 | `WB_NUMBER_FORMAT_INVALID` | Error | A `NumberFormat` containing a control character |
 | `WB_NUMBER_FORMAT_UNSUPPORTED` | Warning (ODS only) | A `NumberFormat` that can't be translated to an ODS data style; the cell falls back to the default format |
+| `WB_NO_VISIBLE_SHEET` | Error (XLSX) / Warning (ODS) | Every sheet's `Visibility` is `Hidden` or `VeryHidden`. Excel rejects such a file; LibreOffice opens it and unhides a sheet. Not checked for delimited files |
+| `WB_SHEET_VERY_HIDDEN_UNSUPPORTED` | Warning (ODS only) | A `VeryHidden` sheet, which ODS can't express; it is written as hidden, so readers can unhide it |
+| `WB_SHEET_VISIBILITY_INVALID` | Error | `Visibility` is not a defined `SheetVisibility` value |
 | `WB_FREEZE_INVALID` / `WB_AUTOFILTER_INVALID` | Error | Negative freeze counts, or an auto-filter range whose end is before its start |
 | `WB_DELIMITED_MULTIPLE_SHEETS` | Warning | More than one sheet when generating a delimited file; only the first is written |
 | `WB_DELIMITED_DATE_FORMAT_INVALID` | Error | `oWorkbook.DelimitedDateFormat` is not a valid .NET date format string. See [Date Format](Working-with-Delimited-Files.md#date-format) |
@@ -180,6 +183,7 @@ It does not check argument counts or whether a referenced range is sensible for 
 - `META-INF/manifest.xml` exists, has a root entry, and lists every file in the archive. LibreOffice refuses files with unlisted entries.
 - `content.xml`, `styles.xml`, `meta.xml`, and `settings.xml` are well-formed and have the correct root elements, and `content.xml` contains an `office:spreadsheet` body with at least one sheet
 - Sheet names are unique and valid, and rows and cells are nested correctly
+- `ODS_NO_VISIBLE_SHEET` warning when every table's style sets `table:display="false"`. LibreOffice still opens the file, unhiding a sheet
 - Cell values match their `office:value-type` (`float`, `percentage`, `currency`, `date`, `time`, `boolean`, `string`)
 - Repeat and span counts are positive integers, style references resolve, and formatting properties use the `style:` namespace
 

@@ -48,12 +48,38 @@ namespace OslSpreadsheet.Validation
                 issues.Error($"{Prefix}_DELIMITED_DATE_FORMAT_INVALID",
                     $"DelimitedDateFormat \"{XlsxValidator.Truncate(workbook.DelimitedDateFormat)}\" is not a valid .NET date format string. Use a custom format such as yyyy-MM-dd or MM/dd/yyyy HH:mm.");
 
+            if (format != ValidationFileFormat.Delimited)
+                ValidateVisibility(workbook, format, issues);
+
             var sheetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var sheet in workbook.Sheets)
                 ValidateSheetName(sheet, format, sheetNames, issues);
 
             foreach (var sheet in workbook.Sheets)
                 ValidateSheet(sheet, format, sheetNames, workbook, issues, options);
+        }
+
+        private static void ValidateVisibility(oWorkbook workbook, ValidationFileFormat format, IssueCollector issues)
+        {
+            foreach (var sheet in workbook.Sheets)
+            {
+                if (!Enum.IsDefined(sheet.Visibility))
+                    issues.Error($"{Prefix}_SHEET_VISIBILITY_INVALID",
+                        $"Visibility {(int)sheet.Visibility} is not a SheetVisibility value. Use Visible, Hidden, or VeryHidden.", sheet: sheet.SheetName);
+                else if (format == ValidationFileFormat.Ods && sheet.Visibility == SheetVisibility.VeryHidden)
+                    issues.Warning($"{Prefix}_SHEET_VERY_HIDDEN_UNSUPPORTED",
+                        $"Sheet \"{sheet.SheetName}\" is VeryHidden, which ODS can't express. It will be written as hidden, so users can unhide it.", sheet: sheet.SheetName);
+            }
+
+            // Excel refuses a workbook with no visible sheet; LibreOffice unhides one, so for ODS it's only a warning
+            if (workbook.Sheets.All(s => s.Visibility != SheetVisibility.Visible))
+            {
+                const string message = "Every sheet is hidden. Set at least one sheet's Visibility to Visible.";
+                if (format == ValidationFileFormat.Xlsx)
+                    issues.Error($"{Prefix}_NO_VISIBLE_SHEET", message);
+                else
+                    issues.Warning($"{Prefix}_NO_VISIBLE_SHEET", message);
+            }
         }
 
         private static bool IsValidDateFormat(string format)
