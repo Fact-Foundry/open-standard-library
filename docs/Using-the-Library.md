@@ -37,6 +37,8 @@ The array is sized to the sheet's row and column counts. Positions with no cell 
 
 ## Cell Helpers
 
+Cells are addressed by a 1-based row and column. `AddCell()` and `new oCell(row, column)` throw `ArgumentOutOfRangeException` for a row or column below 1; the upper bounds (1,048,576 rows and 16,384 columns) are reported by `workbook.Validate()` as `WB_CELL_POSITION_INVALID`.
+
 `oCell` has extension methods for converting values in place:
 
 - `FromEpochSeconds()`, `FromEpochMilliseconds()`, `ToEpochSeconds()`, `ToEpochMilliseconds()` — convert between Unix epoch timestamps and ISO 8601 DateTime values (treated as UTC)
